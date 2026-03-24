@@ -86,9 +86,13 @@ Example **read-only SQL** against `chat.db` (counts, recent messages, search): [
 
 ### Messages and automation
 
-`actions.py` runs **AppleScript** (`osascript`) to send replies and delete threads. You may be prompted to allow **Automation** (e.g. Terminal controlling Messages). Approve those prompts for the app you use to run `python main.py`.
+`actions.py` runs **AppleScript** (`osascript`) to send replies and delete threads. You may be prompted to allow **Automation** (e.g. Terminal or **Cursor** controlling **Messages**). Approve those prompts for the app you use to run `python main.py` or **`poe quit-messages`**. If AppleScript “does nothing,” check **System Settings → Privacy & Security → Automation** for your terminal/IDE.
 
 **Accessibility** may be mentioned for richer UI automation; AppleScript against Messages still depends on what macOS allows for your runner app. If something fails, check **System Settings → Privacy & Security** for related toggles.
+
+### Writes to `chat.db` (archive)
+
+The **`archive`** action copies a row into `<TAG>_archive` and removes the live **`message`** row. That opens **`chat.db` for writing**. Quit the **Messages.app GUI** first so the DB is not locked — the agent prompts when needed; you can also run **`poe quit-messages`** beforehand. Take a copy with **`poe backup-db`** (writes under **`backups/`** in the project root; see `scripts/backup_chat_db.py`).
 
 ### Blocklist caveat
 
@@ -104,7 +108,7 @@ You can change defaults in code or override them in **`.env`** (same keys as in 
 | `LOOKBACK_MINUTES`    | Only messages newer than this window                                                   |
 | `CHAT_DB_PATH`        | Path to `chat.db` (default: `~/Library/Messages/chat.db`)                              |
 | `STOP_REPLY_TEXT`     | Text sent for the `send_stop` action (default: `STOP`)                                 |
-| `DRY_RUN`             | When `True`, no send/block/delete (also set by `python main.py --dry-run`)             |
+| `DRY_RUN`             | When `True`, no real sends / archive / deletes (set by `python main.py --dry-run`)   |
 | `LOG_FILE`            | Path to the agent log file (default: `sms_agent.log` in the current working directory) |
 
 ## 7. Run the agent
@@ -112,9 +116,12 @@ You can change defaults in code or override them in **`.env`** (same keys as in 
 From the project root, with the venv activated and your key available:
 
 ```bash
-# Preview only — no sends, deletes, or real AppleScript side effects beyond logging.
-# Logs each message’s matched rule names (e.g. Matched rules: ['spam_stop']) and merged actions.
+# Agent preview — same filters as a real run: inbound-only, lookback window, blocklist skips.
+# Logs Attributes, Matched rules, Actions; no archive / send_stop / delete / block side effects.
 python main.py --dry-run
+
+# If you see "No new messages found.", widen the window (minutes) or raise --limit.
+python main.py --dry-run --lookback 1440 --limit 100
 
 # Single run (defaults: lookback and limit from config)
 python main.py
@@ -126,11 +133,76 @@ python main.py --loop 120
 python main.py --lookback 360 --limit 200
 ```
 
-**Working directory:** Logs and `blocked_senders.txt` are created relative to the **current working directory** unless you change `config.py`. Running from the project root is the simplest approach.
+**Richer preview (read-only `chat.db`):** To print recent rows **inbound + outbound** (latest by date) with **Attributes**, **Matched rules**, and **Actions (execution)** — without the agent’s lookback filter — use **`poe preview-recent`** or **`poe preview-recent-compact`** (see [QUERIES.md](QUERIES.md)). **`\*-offline`** variants skip Claude and use **`UNKNOWN`** tags only.
+
+**Working directory:** Logs, `blocked_senders.txt`, and **`backups/`** (from `poe backup-db`) are created relative to the **current working directory** unless you change paths in `config.py`. Running from the project root is the simplest approach; **`poe echo-cd-root`** prints a copy-pasteable `cd` to the repo root.
 
 ## 8. Optional: verify database access
 
 If setup is correct and Full Disk Access is granted, Python should be able to open the DB read-only. If `main.py` or tests that use a real path fail, re-check Full Disk Access for the exact binary launching Python (terminal app, IDE, or `python` from the venv).
+
+## 9. Optional: tab completion for `poe`
+
+[Poe the Poet](https://github.com/nat-n/poethepoet) can complete **task names** (e.g. `query-total`, `cov`) and **global flags** (`-C`, `-v`, …). Generate the script with the same `poe` you use day to day — with the venv activated so `which poe` points at `venv/bin/poe`.
+
+### zsh (default on macOS)
+
+**Without Oh My Zsh:**
+
+```bash
+mkdir -p ~/.zfunc
+poe _zsh_completion > ~/.zfunc/_poe
+```
+
+Add to `~/.zshrc`:
+
+```zsh
+fpath+=~/.zfunc
+autoload -Uz compinit && compinit
+```
+
+**With Oh My Zsh:**
+
+```bash
+mkdir -p ~/.oh-my-zsh/completions
+poe _zsh_completion > ~/.oh-my-zsh/completions/_poe
+```
+
+Open a new terminal. If completions look stale after upgrading `poethepoet`, run `rm ~/.zcompdump*` and restart zsh.
+
+### After you edit `pyproject.toml` tasks
+
+You **do not** need to re-run `poe _zsh_completion` just because you added or renamed tasks. The `_poe` script you installed is generic; it asks `poe` for the current task list when you tab-complete.
+
+**zsh** caches that list (on the order of **~1 hour** and/or after several completions in the same session). To see new task names sooner:
+
+- Open a **new terminal** (clears Poe’s in-memory cache), and/or  
+- Delete Poe’s completion cache files, e.g.  
+  `rm -f ~/.zcompcache/*poe*`  
+  (if that directory is empty or missing, you only needed the new shell).
+
+Re-run `poe _zsh_completion > …` when you **upgrade** the `poethepoet` package itself, in case the completion script format changed.
+
+**bash:** start a new shell or `source ~/.bashrc` if completions feel stale; re-run `poe _bash_completion` (or reinstall the completion file) after upgrading `poethepoet`.
+
+### bash
+
+**Quick (add to `~/.bashrc`):**
+
+```bash
+eval "$(poe _bash_completion)"
+```
+
+**Or install a completion file:**
+
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+poe _bash_completion > ~/.local/share/bash-completion/completions/poe
+```
+
+You may need the `bash-completion` package and a line in `~/.bashrc` that sources user completions (varies by OS).
+
+More detail: [Poe the Poet — Installation](https://poethepoet.natn.io/installation.html).
 
 ---
 

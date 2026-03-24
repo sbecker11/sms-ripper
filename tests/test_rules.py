@@ -42,8 +42,9 @@ def test_spam_and_scam_merges_actions():
     assert "delete" in out
 
 
-def test_political_delete_only_when_not_personal():
-    assert "delete" in rules.evaluate(_msg(["POLITICAL"]))
+def test_political_archive_stop_block_order_when_not_personal():
+    out = rules.evaluate(_msg(["POLITICAL"]))
+    assert out.index("archive") < out.index("send_stop") < out.index("block")
     assert rules.evaluate(_msg(["POLITICAL", "PERSONAL"])) == []
 
 

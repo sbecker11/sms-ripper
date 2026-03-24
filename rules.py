@@ -6,6 +6,7 @@ Actions:
   send_stop    — reply with STOP text
   block        — block the sender in Messages
   delete       — delete the entire chat thread
+  archive      — copy message row into <tag>_archive in chat.db, then remove the live row
   log_only     — just log it, no action
 """
 
@@ -42,9 +43,9 @@ RULES: list[Rule] = [
 
     Rule(
         name="political",
-        description="Political messaging — delete silently",
+        description="Political messaging — archive, send STOP, add sender to blocklist",
         condition=lambda attrs: "POLITICAL" in attrs and "PERSONAL" not in attrs,
-        actions=["delete"],
+        actions=["archive", "send_stop", "block"],
     ),
 
     Rule(

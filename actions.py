@@ -4,12 +4,22 @@ AppleScript-backed actions for the SMS agent.
 Each function returns True on success, False on failure.
 """
 
-import subprocess
 import logging
+import subprocess
+import sys
+
+import archive
 import config
 from reader import Message
 
 logger = logging.getLogger("sms_agent")
+
+MESSAGES_QUIT_PROMPT = (
+    "This operation writes to or deletes data in the Messages database. "
+    "The Messages (iMessage) app must be fully terminated first "
+    "(Messages → Quit Messages, or Cmd+Q). "
+    "While Messages is running, the database may be locked and changes can be unsafe."
+)
 
 
 def _run_applescript(script: str) -> tuple[bool, str]:
@@ -32,6 +42,53 @@ def _run_applescript(script: str) -> tuple[bool, str]:
     except Exception as e:
         logger.error(f"AppleScript exception: {e}")
         return False, str(e)
+
+
+def _is_messages_running() -> bool:
+    """True if the Messages.app GUI process is running (macOS), not BlastDoor/Chrome/etc."""
+    try:
+        subprocess.run(
+            [
+                "pgrep",
+                "-f",
+                r"Messages\.app/Contents/MacOS/Messages",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=5,
+        )
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def _messages_quit_guard() -> bool:
+    """
+    Before WRITE/DELETE side effects on the Messages database, ensure Messages is not running.
+    In dry-run mode, always allow (no real DB access).
+    If running and stdin is a TTY, prompt once to quit and retry after Enter.
+    """
+    if config.DRY_RUN:
+        return True
+    if not _is_messages_running():
+        return True
+    logger.error(MESSAGES_QUIT_PROMPT)
+    print(MESSAGES_QUIT_PROMPT, file=sys.stderr)
+    if sys.stdin.isatty():
+        try:
+            input(
+                "Quit Messages, then press Enter to continue (or Ctrl+C to abort)... "
+            )
+        except (KeyboardInterrupt, EOFError):
+            logger.info("Aborted waiting for Messages to quit.")
+            return False
+        if not _is_messages_running():
+            return True
+        still = "Messages is still running. Quit it completely, then run again."
+        logger.error(still)
+        print(still, file=sys.stderr)
+        return False
+    return False
 
 
 def send_stop(message: Message) -> bool:
@@ -128,6 +185,11 @@ def log_only(message: Message) -> bool:
     return True
 
 
+def archive_message(message: Message) -> bool:
+    """Copy message into <tag>_archive, then remove the live DB row (see archive.py)."""
+    return archive.archive_message(message)
+
+
 # --- Local blocklist helpers ---
 
 BLOCKLIST_FILE = "blocked_senders.txt"
@@ -150,17 +212,36 @@ ACTION_MAP = {
     "send_stop": send_stop,
     "block":     block_sender,
     "delete":    delete_thread,
+    "archive":   archive_message,
     "log_only":  log_only,
 }
 
+
+def _execution_action_order(actions: list[str]) -> list[str]:
+    """Ensure archive runs before delete; keep relative order within each group."""
+    archives = [a for a in actions if a == "archive"]
+    deletes = [a for a in actions if a == "delete"]
+    rest = [a for a in actions if a not in ("archive", "delete")]
+    return archives + rest + deletes
+
+
 def execute_actions(message: Message, actions: list[str]) -> dict[str, bool]:
     """Run all actions for a message. Returns {action: success} map."""
-    results = {}
+    actions = _execution_action_order(actions)
+    results: dict[str, bool] = {}
+    db_mutations = {"send_stop", "delete", "archive"}
+    guard_ok = True
+    if not config.DRY_RUN and set(actions) & db_mutations:
+        guard_ok = _messages_quit_guard()
+
     for action in actions:
         fn = ACTION_MAP.get(action)
-        if fn:
-            results[action] = fn(message)
-        else:
+        if not fn:
             logger.warning(f"Unknown action: {action}")
             results[action] = False
+            continue
+        if not guard_ok and action in db_mutations:
+            results[action] = False
+            continue
+        results[action] = fn(message)
     return results

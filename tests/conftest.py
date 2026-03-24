@@ -54,7 +54,7 @@ def populate_chat_db(
     chat_identifier: str = "+15551234567",
     sender: str = "+15551234567",
     associated_message_type: int = 0,
-) -> None:
+) -> int:
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
@@ -77,5 +77,6 @@ def populate_chat_db(
             (msg_rowid, chat_rowid),
         )
         conn.commit()
+        return msg_rowid
     finally:
         conn.close()

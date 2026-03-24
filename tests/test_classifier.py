@@ -102,6 +102,29 @@ def test_classify_message_missing_api_key():
             classifier.classify_message("hi")
 
 
+def test_classify_message_adds_political_for_white_house(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["LEGIT"], "reason": "ok"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        attrs, _ = classifier.classify_message("News from the White House")
+
+    assert "POLITICAL" in attrs
+    assert "LEGIT" in attrs
+
+
+def test_classify_message_adds_political_for_us_red(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["PROMO"], "reason": "offer"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        attrs, _ = classifier.classify_message("Text us-red for updates")
+
+    assert "POLITICAL" in attrs
+
+
 def test_classify_message_http_error(monkeypatch):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
 

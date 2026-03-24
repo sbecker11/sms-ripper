@@ -1,5 +1,6 @@
 """Tests for actions helpers and execute_actions."""
 
+import io
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -101,8 +102,62 @@ def test_run_applescript_generic_exception(monkeypatch):
     assert ok is False and "nope" in msg
 
 
+def test_send_stop_skipped_when_messages_running_non_interactive(monkeypatch):
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.setattr(actions, "_is_messages_running", lambda: True)
+    monkeypatch.setattr(actions.sys, "stdin", io.StringIO())
+    called: list[str] = []
+
+    def no_applescript(script: str):
+        called.append(script)
+        return True, ""
+
+    monkeypatch.setattr(actions, "_run_applescript", no_applescript)
+
+    msg = _sample_message()
+    results = actions.execute_actions(msg, ["send_stop"])
+    assert results["send_stop"] is False
+    assert called == []
+
+
+def test_delete_thread_skipped_when_messages_running_non_interactive(monkeypatch):
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.setattr(actions, "_is_messages_running", lambda: True)
+    called: list[str] = []
+
+    monkeypatch.setattr(
+        actions, "_run_applescript", lambda s: called.append(s) or (True, "")
+    )
+    monkeypatch.setattr(actions.sys, "stdin", io.StringIO())
+
+    msg = _sample_message()
+    results = actions.execute_actions(msg, ["delete"])
+    assert results["delete"] is False
+    assert called == []
+
+
+def test_messages_quit_guard_interactive_succeeds_after_quit(monkeypatch):
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    states = [True, False]
+
+    def running():
+        return states.pop(0) if states else False
+
+    monkeypatch.setattr(actions, "_is_messages_running", running)
+
+    class _TtyStdin:
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr(actions.sys, "stdin", _TtyStdin())
+    monkeypatch.setattr("builtins.input", lambda _: "")
+
+    assert actions._messages_quit_guard() is True
+
+
 def test_send_stop_uses_fallback_script(monkeypatch):
     monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.setattr(actions, "_is_messages_running", lambda: False)
     calls: list[str] = []
 
     def fake(script: str):
@@ -118,19 +173,52 @@ def test_send_stop_uses_fallback_script(monkeypatch):
 
 def test_send_stop_both_fail(monkeypatch):
     monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.setattr(actions, "_is_messages_running", lambda: False)
     monkeypatch.setattr(actions, "_run_applescript", lambda s: (False, "no"))
     assert actions.send_stop(_sample_message()) is False
 
 
 def test_delete_thread_failure_logs(monkeypatch):
     monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.setattr(actions, "_is_messages_running", lambda: False)
     monkeypatch.setattr(actions, "_run_applescript", lambda s: (False, "cannot delete"))
     assert actions.delete_thread(_sample_message()) is False
 
 
 def test_delete_thread_success(monkeypatch):
     monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.setattr(actions, "_is_messages_running", lambda: False)
     monkeypatch.setattr(actions, "_run_applescript", lambda s: (True, ""))
     msg = _sample_message()
     assert actions.delete_thread(msg) is True
     assert "delete" in msg.actions_taken
+
+
+def test_execution_action_order_archive_before_delete():
+    assert actions._execution_action_order(["delete", "send_stop", "archive"]) == [
+        "archive",
+        "send_stop",
+        "delete",
+    ]
+
+
+def test_execute_actions_runs_archive_before_delete(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "DRY_RUN", True)
+    order: list[str] = []
+
+    def arch(m):
+        order.append("archive")
+        m.actions_taken.append("archive")
+        return True
+
+    def dele(m):
+        order.append("delete")
+        m.actions_taken.append("delete")
+        return True
+
+    monkeypatch.setitem(actions.ACTION_MAP, "archive", arch)
+    monkeypatch.setitem(actions.ACTION_MAP, "delete", dele)
+
+    actions.execute_actions(_sample_message(), ["delete", "archive"])
+    assert order == ["archive", "delete"]

@@ -9,3 +9,4 @@ htmlcov/
 .DS_Store
 sms_agent.log
 blocked_senders.txt
+backups/

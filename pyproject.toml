@@ -14,7 +14,18 @@ test-quiet = "pytest tests/ -q"
 cov = "pytest tests/ --cov=reader --cov=classifier --cov=rules --cov=actions --cov=config --cov=main --cov-report=term-missing --cov-fail-under=80"
 cov-html = "pytest tests/ --cov=reader --cov=classifier --cov=rules --cov=actions --cov=config --cov=main --cov-report=term-missing --cov-report=html --cov-fail-under=80"
 dry-run = "python main.py --dry-run"
+# Recent messages: tags + matched rules + planned actions + SQLite subset (read-only DB; Claude unless --no-classify)
+preview-recent = "python scripts/dry_run_recent.py"
+preview-recent-offline = "python scripts/dry_run_recent.py --no-classify"
+preview-recent-compact = "python scripts/dry_run_recent.py --compact"
+preview-recent-compact-offline = "python scripts/dry_run_recent.py --compact --no-classify"
 run = "python main.py"
+# Copy CHAT_DB_PATH (from .env) to backups/chat.db.UTC-<YYYY-MM-DDTHH-MM-SSZ>.bak
+backup-db = "python scripts/backup_chat_db.py"
+# Quit Messages (iMessage) if running — run before backup-db / archive (macOS)
+quit-messages = "bash scripts/quit_messages.sh"
+# Print a copy-pasteable `cd …` to repo root (backups/, logs, blocklist, .env)
+echo-cd-root = "python scripts/echo_repo_cd.py"
 # chat.db read-only reports (macOS + Full Disk Access; see docs/QUERIES.md)
 query-total = "bash scripts/run_chat_query.sh queries/total_messages.sql"
 query-text = "bash scripts/run_chat_query.sh queries/text_messages_no_tapback.sql"
@@ -22,6 +33,8 @@ query-directions = "bash scripts/run_chat_query.sh queries/direction_counts.sql"
 query-chats = "bash scripts/run_chat_query.sh queries/chat_count.sql"
 query-top-chats = "bash scripts/run_chat_query.sh queries/top_chats.sql"
 query-recent = "bash scripts/run_chat_query.sh queries/recent_20.sql"
+query-recent-tags = "python scripts/format_recent_simple.py"
+query-recent-tags-offline = "python scripts/format_recent_simple.py --no-classify"
 query-handles = "bash scripts/run_chat_query.sh queries/handles_sample.sql"
 query-empty-text = "bash scripts/run_chat_query.sh queries/empty_text_count.sql"
 query-associated-types = "bash scripts/run_chat_query.sh queries/associated_type_breakdown.sql"

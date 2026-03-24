@@ -21,11 +21,24 @@ From the **project root** (venv optional for these; `sqlite3` is the macOS CLI):
 | `poe query-directions` | Inbound vs outbound counts |
 | `poe query-chats` | Number of conversations |
 | `poe query-top-chats` | Top 25 chats by message volume |
-| `poe query-recent` | Latest 20 text messages (preview) |
+| `poe query-recent` | Latest 20 text messages (row id, chat, sender, raw date, 80-char preview) |
+| `poe query-recent-tags` | Same 20 messages via **`scripts/format_recent_simple.py`**: line 1 = UTC + source; line 2 = **Claude attribute tags** (same tokens `rules.py` uses: SPAM, STOP, …); then body; needs **`.env` API key**; **blank line** + full-width **`---…`** between entries |
+| `poe query-recent-tags-offline` | Same layout, tags line is **`(not classified)`** — no Anthropic calls |
 | `poe query-handles` | Up to 100 handle ids |
 | `poe query-empty-text` | Count NULL/empty `text` rows |
 | `poe query-associated-types` | Breakdown by `associated_message_type` |
 | `poe query-orphans` | Messages not linked to any chat |
+| `poe preview-recent` | **`scripts/dry_run_recent.py`**: latest N text messages (inbound + outbound, read-only DB). **Claude** tags + **Matched rules** + **Actions (execution)** (and **Actions (rule merge)** if reorder applies). **`--limit`** on the script; needs `.env` API key |
+| `poe preview-recent-offline` | Same script with **`--no-classify`** — attributes **`UNKNOWN`** only; fast, not representative of real tags |
+| `poe preview-recent-compact` | Same as `preview-recent` but **`--compact`**: one header line per message + **Attributes** / **Matched rules** / action lines only (no full body block) |
+| `poe preview-recent-compact-offline` | Compact + **`--no-classify`** |
+| `poe backup-db` | Copy **`CHAT_DB_PATH`** (from `.env`) to **`backups/chat.db.UTC-<timestamp>.bak`** |
+| `poe quit-messages` | Quit **Messages.app** if running (`scripts/quit_messages.sh`); run before **`backup-db`** / **`archive`** |
+| `poe echo-cd-root` | Print a shell **`cd …`** to the repo root (where **`backups/`**, logs, `.env` live) |
+
+**`main.py --dry-run`** is different: it uses **`reader.get_recent_messages`** (**inbound only**, **lookback** window). If that shows no rows, **`poe preview-recent`** can still list recent traffic from the DB.
+
+**Execution order:** `actions.execute_actions` runs **`archive` before `delete`** even when rule merge order lists `delete` first. The preview script shows **`Actions (execution)`** (and **`Actions (rule merge)`** when they differ).
 
 Direct shell (same as `poe`):
 
@@ -37,6 +50,17 @@ bash scripts/run_chat_query.sh queries/total_messages.sql
 
 ```bash
 CHAT_DB_PATH="$HOME/Library/Messages/chat.db" poe query-total
+```
+
+### `dry_run_recent.py` (preview-recent)
+
+Read-only `chat.db`. Each message block includes **`n/total`** on the first line, **rowid** / chat metadata, classifier **Tags** (full mode) or **Attributes:** (compact), **Matched rules:**, **Actions (execution):** (and **Actions (rule merge):** when reorder is applied), and in full mode **chat.db (SQLite):** for steps that write SQLite (`archive`). Examples:
+
+```bash
+poe preview-recent
+poe preview-recent-compact
+python scripts/dry_run_recent.py --help
+python scripts/dry_run_recent.py --compact --limit 50
 ```
 
 ---
@@ -171,6 +195,51 @@ WHERE m.text IS NOT NULL
   AND m.associated_message_type = 0
 ORDER BY m.date DESC
 LIMIT 20;
+```
+
+### Latest 20 — date, from, message only
+
+**`poe query-recent-tags`** runs **`scripts/format_recent_simple.py`** (read-only DB, same joins/filters as below).
+
+This is the **recommended terminal view** when you want a **visually tight** dump: two compact header lines (time/source + tags), then the body without extra padding under the dash separator, and only a single blank line before each full-width dash rule. It stays readable in a narrow or busy terminal without the wide columns and wrapped gutters of `sqlite3 -column` mode.
+
+**Classification:** by default each message is sent to **Claude** via `classifier.classify_message` (same attribute list as in `rules.py`: SPAM, STOP, SCAM, POLITICAL, PROMO, LEGIT, PERSONAL, UNKNOWN). That uses your **Anthropic API key** from `.env` and incurs **one API request per message** shown. Use **`--no-classify`** or **`poe query-recent-tags-offline`** to skip calls and print **`(not classified)`** on the tags line.
+
+Output format:
+
+1. **First line:** UTC timestamp `YYYY-MM-DD HH:MM:SS`, a space, then the source (`me`, a handle, or `chat_identifier`). If the time cannot be derived from `message.date`, the timestamp is **`(no datetime)`**. If there is no handle/chat for an inbound message, the source is **`(no source)`**.
+2. **Second line:** space-separated **attribute tags** from the classifier (or **`(classification error: …)`** if the call fails, or **`(not classified)`** with `--no-classify`).
+3. **Following lines:** the message body split on newlines; each line is printed **after stripping leading spaces and tabs** only. Lines that become empty after that strip are still printed as a blank line.
+4. Consecutive messages: a **blank line**, then a **full-width line of dashes** (tty width via `shutil.get_terminal_size()`, minimum 20; if not a TTY, **`COLUMNS`** env or 80). The next message’s **datetime line starts on the line immediately after** those dashes.
+
+Options:
+
+```bash
+poe query-recent-tags
+poe query-recent-tags-offline
+python scripts/format_recent_simple.py --limit 10
+python scripts/format_recent_simple.py --no-classify --limit 10
+CHAT_DB_PATH="$HOME/Library/Messages/chat.db" poe query-recent-tags
+```
+
+Flat **sqlite3** table output (no per-line body formatting) is still available:
+
+```bash
+bash scripts/run_chat_query.sh queries/recent_20_simple.sql
+```
+
+`scripts/queries/recent_20_simple.sql` — underlying SELECT (same predicates as `recent_20.sql`):
+
+```sql
+SELECT
+  datetime(CAST(m.date AS REAL) / 1000000000.0 + 978307200, 'unixepoch') AS date,
+  CASE
+    WHEN m.is_from_me = 1 THEN 'me'
+    ELSE COALESCE(h.id, c.chat_identifier, '')
+  END AS "from",
+  m.text AS message
+FROM message m
+-- … same joins and WHERE as recent_20.sql …
 ```
 
 ### Messages in the last 24 hours (raw `date`; approximate without Python conversion)

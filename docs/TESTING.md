@@ -28,8 +28,15 @@ From the **project root**, with the venv activated:
 | `poe cov-html` | Same as `cov`, plus `htmlcov/` |
 | `poe dry-run` | `python main.py --dry-run` |
 | `poe run` | `python main.py` |
+| `poe preview-recent` | `scripts/dry_run_recent.py` — tags, rules, **Actions (execution)** (read-only DB; Claude unless `*-offline`) |
+| `poe preview-recent-offline` | Same with **`--no-classify`** |
+| `poe preview-recent-compact` | **`--compact`** output |
+| `poe preview-recent-compact-offline` | Compact + **`--no-classify`** |
+| `poe backup-db` | Timestamped `chat.db` copy under **`backups/`** |
+| `poe quit-messages` | Quit Messages.app if running |
+| `poe echo-cd-root` | Print `cd` to repo root |
 
-**`chat.db` (iMessage) read-only queries:** `poe query-total`, `poe query-text`, `poe query-recent`, `poe query-top-chats`, and more — see [QUERIES.md](QUERIES.md).
+**`chat.db` read-only SQL reports:** `poe query-total`, `poe query-text`, `poe query-recent`, `poe query-recent-tags` (Claude per message unless `query-recent-tags-offline`), `poe query-top-chats`, and more — see [QUERIES.md](QUERIES.md).
 
 List tasks: `poe --help` or `poe`.
 
@@ -128,7 +135,9 @@ The `htmlcov/` directory is generated locally; add it to `.gitignore` if it is n
 | Reader     | `tests/test_reader.py`     | Apple timestamp helpers, SQL query behavior on a **temporary** SQLite DB, filters, missing DB error |
 | Rules      | `tests/test_rules.py`      | `rules.evaluate` for attribute → action mapping                                                     |
 | Classifier | `tests/test_classifier.py` | Mocked `urllib` responses, HTTP errors, missing API key                                             |
-| Actions    | `tests/test_actions.py`    | Blocklist, dry-run, mocked `subprocess` / AppleScript paths                                         |
+| Actions    | `tests/test_actions.py`    | Blocklist, dry-run, mocked `subprocess` / AppleScript paths; **archive-before-delete** execution order |
+| Archive    | `tests/test_archive.py`    | `POLITICAL_archive` copy/delete on a temp DB                                                       |
+| Dry preview | `tests/test_dry_run_recent.py` | Subprocess smoke tests for `scripts/dry_run_recent.py`                                         |
 | Main       | `tests/test_main.py`       | `process_once` branches with mocked reader/classifier/actions; CLI flags and loop behavior          |
 
 The `if __name__ == "__main__"` block in `main.py` is marked with `# pragma: no cover` because it only runs when you execute `python main.py`, not when tests import the module.

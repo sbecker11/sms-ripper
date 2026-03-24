@@ -1,8 +1,9 @@
 # SMS Agent
 
 An AI-powered iMessage agent that reads recent messages, classifies them using Claude,
-applies configurable rules, and takes action — sending STOP replies, blocking senders,
-and deleting spam threads.
+applies configurable rules, and takes action — e.g. **archiving** rows into `<TAG>_archive`
+tables in `chat.db`, sending **STOP**, **blocklist** entries, **delete thread** (AppleScript),
+and **log-only** paths.
 
 ## Setup
 
@@ -28,18 +29,29 @@ In **System Settings → Privacy & Security → Accessibility**:
 ## Usage
 
 ```bash
-# Dry run — preview actions; logs which rules matched per message (see Matched rules:)
+# Agent: dry run — same pipeline as a real run, but no sends / archive / deletes (logs only)
 python main.py --dry-run
 
-# Run once against the last 60 minutes of messages
+# Agent: inbound-only, default lookback (see LOOKBACK_MINUTES in .env / config)
 python main.py
 
-# Run every 2 minutes in the background
+# Agent: poll every N seconds
 python main.py --loop 120
 
-# Look back further / process more messages
+# Agent: wider window (minutes) and more messages per pass
 python main.py --lookback 360 --limit 200
 ```
+
+**Why `dry-run` can show “No new messages”:** `main.py` only loads **inbound** texts in the **lookback** window. For a **read-only** dump of the latest rows from `chat.db` (inbound + outbound) with **Attributes**, **Matched rules**, and **Actions (execution)**, use **`poe preview-recent`** or **`poe preview-recent-compact`** — see [docs/QUERIES.md](docs/QUERIES.md).
+
+**Before any run that writes `chat.db` (e.g. `archive`):** quit Messages, then back up:
+
+```bash
+poe quit-messages
+poe backup-db
+```
+
+Other **`poe`** tasks (queries, repo path): [docs/QUERIES.md](docs/QUERIES.md) and [docs/TESTING.md](docs/TESTING.md).
 
 ## How It Works
 
@@ -50,23 +62,26 @@ chat.db → reader.py → classifier.py (Claude API) → rules.py → actions.py
 1. **reader.py** — reads `~/Library/Messages/chat.db` in read-only mode
 2. **classifier.py** — sends each message to Claude Sonnet, gets back attributes:
    `SPAM | STOP | SCAM | POLITICAL | PROMO | LEGIT | PERSONAL | UNKNOWN`
-3. **rules.py** — maps attribute combinations to actions
-4. **actions.py** — executes: `send_stop`, `block`, `delete`, `log_only`
+3. **rules.py** — maps attribute combinations to actions (merge order when multiple rules match)
+4. **actions.py** — executes: `send_stop`, `block`, `delete`, `archive`, `log_only`. **Execution order** is normalized so **`archive` always runs before `delete`** even if rule merge order differs.
 
 ## Customizing Rules
 
 Edit `rules.py` to add or modify rules. Each rule has:
 - `condition`: a lambda that takes the attributes list and returns True/False
-- `actions`: list of `send_stop`, `block`, `delete`, `log_only`
+- `actions`: list of `send_stop`, `block`, `delete`, `archive`, `log_only`
 
-Example — delete all political messages silently:
+Example — archive political messages, send STOP, then record blocklist entry (quit Messages before runs that touch `chat.db`; see `actions.py` for the quit guard):
+
 ```python
 Rule(
     name="political",
-    condition=lambda attrs: "POLITICAL" in attrs,
-    actions=["delete"],
+    condition=lambda attrs: "POLITICAL" in attrs and "PERSONAL" not in attrs,
+    actions=["archive", "send_stop", "block"],
 )
 ```
+
+`poe preview-recent` shows **`Actions (rule merge)`** vs **`Actions (execution)`** when they differ (matches `execute_actions`).
 
 ## Notes on Blocking
 
@@ -83,7 +98,11 @@ To fully block: open Messages, find the thread before deletion, tap Details → 
 | `reader.py` | chat.db reader, Message dataclass |
 | `classifier.py` | Claude API classification |
 | `rules.py` | Rules engine |
-| `actions.py` | AppleScript send/block/delete |
+| `archive.py` | Copy rows to `<TAG>_archive`, delete live `message` row |
+| `actions.py` | AppleScript send/block/delete; dispatches `archive` |
 | `config.py` | Configuration |
 | `blocked_senders.txt` | Local blocklist (auto-created) |
+| `backups/` | `chat.db` copies from `poe backup-db` (gitignored) |
 | `sms_agent.log` | Run log (auto-created) |
+| `scripts/dry_run_recent.py` | Preview tags + rules + execution-ordered actions (read-only DB) |
+| `scripts/backup_chat_db.py` | Timestamped backup under `backups/` |

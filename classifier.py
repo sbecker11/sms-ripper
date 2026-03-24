@@ -33,7 +33,7 @@ Available attributes (assign all that apply):
 - SPAM: unsolicited bulk/commercial message
 - STOP: message is an opt-out, unsubscribe, or the word STOP itself
 - SCAM: fraud, phishing, impersonation, fake prize, fake package delivery
-- POLITICAL: political campaign or polling message
+- POLITICAL: political campaign or polling message; also if the text contains **us-red** or **White House** (case-insensitive)
 - PROMO: promotional offer from a real business (not spam)
 - LEGIT: clearly legitimate transactional message (bank OTP, delivery confirmation, appointment reminder)
 - PERSONAL: appears to be from a real known person
@@ -45,6 +45,20 @@ Rules:
 - LEGIT and SPAM cannot coexist.
 - Return ONLY the JSON object. No markdown, no preamble.
 """
+
+
+# If any phrase appears in the message (case-insensitive), POLITICAL is merged into attributes.
+POLITICAL_TEXT_MARKERS: tuple[str, ...] = ("us-red", "white house")
+
+
+def _merge_political_keywords(text: str, attributes: list[str]) -> list[str]:
+    if "POLITICAL" in attributes:
+        return attributes
+    blob = text.lower()
+    for phrase in POLITICAL_TEXT_MARKERS:
+        if phrase in blob:
+            return [*attributes, "POLITICAL"]
+    return attributes
 
 
 class ClassificationPayload(BaseModel):
@@ -99,12 +113,14 @@ def classify_message(text: str) -> tuple[list[str], str]:
     try:
         parsed = json.loads(raw_text.strip())
     except json.JSONDecodeError:
-        return ["UNKNOWN"], f"Could not parse response: {raw_text[:200]}"
+        attrs = _merge_political_keywords(text, ["UNKNOWN"])
+        return attrs, f"Could not parse response: {raw_text[:200]}"
 
     try:
         model = ClassificationPayload.model_validate(parsed)
     except ValidationError:
-        return ["UNKNOWN"], f"Could not parse response: {raw_text[:200]}"
+        attrs = _merge_political_keywords(text, ["UNKNOWN"])
+        return attrs, f"Could not parse response: {raw_text[:200]}"
 
-    attributes = [a.upper() for a in model.attributes]
+    attributes = _merge_political_keywords(text, [a.upper() for a in model.attributes])
     return attributes, model.reason

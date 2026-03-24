@@ -1,0 +1,97 @@
+"""Tests for archive.first_archival_tag and archive_message."""
+
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+import archive
+import config
+from reader import Message
+from tests.conftest import populate_chat_db
+
+
+def test_first_archival_tag_order(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(archive, "ARCHIVAL_TAGS", frozenset({"ALPHA", "BETA"}))
+    assert archive.first_archival_tag(["BETA", "ALPHA"]) == "BETA"
+    assert archive.first_archival_tag(["OTHER", "ALPHA"]) == "ALPHA"
+    assert archive.first_archival_tag(["OTHER"]) is None
+
+
+def test_archive_table_name():
+    assert archive.archive_table_name("POLITICAL") == "POLITICAL_archive"
+
+
+def test_archive_message_dry_run(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(config, "DRY_RUN", True)
+    msg = Message(
+        rowid=99,
+        chat_id=1,
+        chat_identifier="+1",
+        sender="+1",
+        text="x",
+        is_from_me=False,
+        date=None,
+        attributes=["POLITICAL"],
+    )
+    assert archive.archive_message(msg) is True
+    assert "archive" in msg.actions_taken
+
+
+def test_archive_message_no_tag_returns_false():
+    msg = Message(
+        rowid=1,
+        chat_id=1,
+        chat_identifier="+1",
+        sender="+1",
+        text="x",
+        is_from_me=False,
+        date=None,
+        attributes=["LEGIT"],
+    )
+    assert archive.archive_message(msg) is False
+
+
+def test_archive_message_moves_row(monkeypatch: pytest.MonkeyPatch, chat_db_path: Path):
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    ns = 1_700_000_000_000_000_000
+    mid = populate_chat_db(chat_db_path, date_ns=ns, text="political text")
+
+    msg = Message(
+        rowid=mid,
+        chat_id=1,
+        chat_identifier="+15551234567",
+        sender="+15551234567",
+        text="political text",
+        is_from_me=False,
+        date=None,
+        attributes=["POLITICAL"],
+    )
+    assert archive.archive_message(msg) is True
+
+    conn = sqlite3.connect(chat_db_path)
+    try:
+        assert (
+            conn.execute("SELECT COUNT(*) FROM message WHERE rowid = ?", (mid,)).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM POLITICAL_archive WHERE rowid = ?", (mid,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            conn.execute("SELECT text FROM POLITICAL_archive WHERE rowid = ?", (mid,)).fetchone()[
+                0
+            ]
+            == "political text"
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM chat_message_join WHERE message_id = ?", (mid,)
+            ).fetchone()[0]
+            == 0
+        )
+    finally:
+        conn.close()
