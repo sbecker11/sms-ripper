@@ -14,8 +14,11 @@ Possible attributes (extend as needed):
 """
 
 import json
-import urllib.request
 import urllib.error
+import urllib.request
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 import config
 
 SYSTEM_PROMPT = """You are a message classification agent. 
@@ -44,13 +47,22 @@ Rules:
 """
 
 
+class ClassificationPayload(BaseModel):
+    """JSON shape returned in the assistant message text block."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    attributes: list[str] = Field(default_factory=lambda: ["UNKNOWN"])
+    reason: str = ""
+
+
 def classify_message(text: str) -> tuple[list[str], str]:
     """
     Returns (attributes, reason) for a given message text.
     Falls back to ["UNKNOWN"] on any API error.
     """
     if not config.ANTHROPIC_API_KEY:
-        raise ValueError("ANTHROPIC_API_KEY is not set in environment.")
+        raise ValueError("ANTHROPIC_API_KEY is not set in .env (project root).")
 
     payload = json.dumps({
         "model": "claude-sonnet-4-20250514",
@@ -86,8 +98,13 @@ def classify_message(text: str) -> tuple[list[str], str]:
 
     try:
         parsed = json.loads(raw_text.strip())
-        attributes = [a.upper() for a in parsed.get("attributes", ["UNKNOWN"])]
-        reason = parsed.get("reason", "")
-        return attributes, reason
     except json.JSONDecodeError:
         return ["UNKNOWN"], f"Could not parse response: {raw_text[:200]}"
+
+    try:
+        model = ClassificationPayload.model_validate(parsed)
+    except ValidationError:
+        return ["UNKNOWN"], f"Could not parse response: {raw_text[:200]}"
+
+    attributes = [a.upper() for a in model.attributes]
+    return attributes, model.reason

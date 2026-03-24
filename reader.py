@@ -1,19 +1,22 @@
 # reader.py
-import sqlite3
 import os
+import sqlite3
 from datetime import datetime, timedelta
-from dataclasses import dataclass, field
-from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
 import config
 
 # Apple's CoreData epoch starts Jan 1, 2001
 APPLE_EPOCH_OFFSET = 978307200
 
-def apple_ts_to_datetime(ts: Optional[int]) -> Optional[datetime]:
+
+def apple_ts_to_datetime(ts: int | None) -> datetime | None:
     """Convert Apple nanosecond timestamp to Python datetime."""
     if ts is None or ts == 0:
         return None
     return datetime.utcfromtimestamp(ts / 1e9 + APPLE_EPOCH_OFFSET)
+
 
 def datetime_to_apple_ts(dt: datetime) -> int:
     """Convert Python datetime to Apple nanosecond timestamp."""
@@ -21,17 +24,20 @@ def datetime_to_apple_ts(dt: datetime) -> int:
     return int(unix_ts * 1e9)
 
 
-@dataclass
-class Message:
+class Message(BaseModel):
+    """One row from chat.db plus fields filled in by the pipeline."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=False)
+
     rowid: int
     chat_id: int
-    chat_identifier: str       # phone number or email
-    sender: Optional[str]      # None if is_from_me
+    chat_identifier: str
+    sender: str | None = None
     text: str
     is_from_me: bool
-    date: Optional[datetime]
-    attributes: list = field(default_factory=list)   # filled by classifier
-    actions_taken: list = field(default_factory=list)
+    date: datetime | None = None
+    attributes: list[str] = Field(default_factory=list)
+    actions_taken: list[str] = Field(default_factory=list)
 
     def display(self) -> str:
         direction = "→ ME" if self.is_from_me else f"← {self.sender or self.chat_identifier}"
@@ -42,7 +48,7 @@ class Message:
 def get_recent_messages(
     limit: int = config.MESSAGE_FETCH_LIMIT,
     lookback_minutes: int = config.LOOKBACK_MINUTES,
-    inbound_only: bool = True
+    inbound_only: bool = True,
 ) -> list[Message]:
     """
     Pull recent inbound messages from chat.db.
@@ -89,16 +95,18 @@ def get_recent_messages(
     finally:
         conn.close()
 
-    messages = []
+    messages: list[Message] = []
     for row in rows:
-        messages.append(Message(
-            rowid=row["rowid"],
-            chat_id=row["chat_id"],
-            chat_identifier=row["chat_identifier"],
-            sender=row["sender"],
-            text=row["text"],
-            is_from_me=bool(row["is_from_me"]),
-            date=apple_ts_to_datetime(row["date"]),
-        ))
+        messages.append(
+            Message(
+                rowid=row["rowid"],
+                chat_id=row["chat_id"],
+                chat_identifier=row["chat_identifier"],
+                sender=row["sender"],
+                text=row["text"],
+                is_from_me=bool(row["is_from_me"]),
+                date=apple_ts_to_datetime(row["date"]),
+            )
+        )
 
     return messages

@@ -8,11 +8,13 @@ and deleting spam threads.
 
 ```bash
 # 1. Clone / copy this folder into your project
-# 2. Set your Anthropic API key
-export ANTHROPIC_API_KEY=sk-ant-...
+# 2. Create venv and install deps
+python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
 
-# 3. No pip installs needed — uses only Python stdlib + osascript
+# 3. API key: project-root .env only — ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+See [docs/SETUP.md](docs/SETUP.md) for full setup. Configuration uses **Pydantic** / **pydantic-settings**; the agent still uses stdlib + `osascript` for Messages.
 
 ## Permissions Required
 
@@ -26,7 +28,7 @@ In **System Settings → Privacy & Security → Accessibility**:
 ## Usage
 
 ```bash
-# Dry run — preview what would happen, no actions taken
+# Dry run — preview actions; logs which rules matched per message (see Matched rules:)
 python main.py --dry-run
 
 # Run once against the last 60 minutes of messages

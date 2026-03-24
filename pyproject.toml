@@ -1,0 +1,28 @@
+[tool.coverage.run]
+branch = true
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+precision = 1
+
+# npm-style scripts: `poe test`, `poe cov`, etc. (requires `poethepoet` from requirements.txt)
+[tool.poe.tasks]
+test = "pytest tests/ -v"
+test-quiet = "pytest tests/ -q"
+cov = "pytest tests/ --cov=reader --cov=classifier --cov=rules --cov=actions --cov=config --cov=main --cov-report=term-missing --cov-fail-under=80"
+cov-html = "pytest tests/ --cov=reader --cov=classifier --cov=rules --cov=actions --cov=config --cov=main --cov-report=term-missing --cov-report=html --cov-fail-under=80"
+dry-run = "python main.py --dry-run"
+run = "python main.py"
+# chat.db read-only reports (macOS + Full Disk Access; see docs/QUERIES.md)
+query-total = "bash scripts/run_chat_query.sh queries/total_messages.sql"
+query-text = "bash scripts/run_chat_query.sh queries/text_messages_no_tapback.sql"
+query-directions = "bash scripts/run_chat_query.sh queries/direction_counts.sql"
+query-chats = "bash scripts/run_chat_query.sh queries/chat_count.sql"
+query-top-chats = "bash scripts/run_chat_query.sh queries/top_chats.sql"
+query-recent = "bash scripts/run_chat_query.sh queries/recent_20.sql"
+query-handles = "bash scripts/run_chat_query.sh queries/handles_sample.sql"
+query-empty-text = "bash scripts/run_chat_query.sh queries/empty_text_count.sql"
+query-associated-types = "bash scripts/run_chat_query.sh queries/associated_type_breakdown.sql"
+query-orphans = "bash scripts/run_chat_query.sh queries/orphan_messages.sql"

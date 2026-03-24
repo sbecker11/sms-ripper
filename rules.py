@@ -70,10 +70,10 @@ RULES: list[Rule] = [
 ]
 
 
-def evaluate(message: Message) -> list[str]:
+def evaluate_detailed(message: Message) -> tuple[list[str], list[str]]:
     """
-    Returns the merged list of actions for all matching rules.
-    Deduplicates and respects priority (first match wins for conflicts).
+    Returns (merged_actions, matched_rule_names) in rule order.
+    If no rule matches, actions become ["log_only"] and matched names stay empty.
     """
     all_actions: list[str] = []
     matched_rules: list[str] = []
@@ -88,4 +88,13 @@ def evaluate(message: Message) -> list[str]:
     if not all_actions and not matched_rules:
         all_actions = ["log_only"]
 
-    return all_actions
+    return all_actions, matched_rules
+
+
+def evaluate(message: Message) -> list[str]:
+    """
+    Returns the merged list of actions for all matching rules, deduplicated
+    in rule order. If no rule matches, returns ["log_only"].
+    """
+    actions, _ = evaluate_detailed(message)
+    return actions

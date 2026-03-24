@@ -1,0 +1,759 @@
+<html>
+
+<head>
+<meta http-equiv=Content-Type content="text/html; charset=utf-8">
+<meta name=Generator content="Microsoft Word 15 (filtered)">
+<style>
+<!--
+ /* Font Definitions */
+ @font-face
+	{font-family:Wingdings;
+	panose-1:5 0 0 0 0 0 0 0 0 0;}
+@font-face
+	{font-family:PMingLiU;
+	panose-1:2 2 5 0 0 0 0 0 0 0;}
+@font-face
+	{font-family:"Cambria Math";
+	panose-1:2 4 5 3 5 4 6 3 2 4;}
+@font-face
+	{font-family:Aptos;
+	panose-1:2 11 0 4 2 2 2 2 2 4;}
+@font-face
+	{font-family:"var\(--font-mono\)";
+	panose-1:2 11 6 4 2 2 2 2 2 4;}
+@font-face
+	{font-family:"\@PMingLiU";
+	panose-1:2 1 6 1 0 1 1 1 1 1;}
+ /* Style Definitions */
+ p.MsoNormal, li.MsoNormal, div.MsoNormal
+	{margin-top:0in;
+	margin-right:0in;
+	margin-bottom:8.0pt;
+	margin-left:0in;
+	line-height:115%;
+	font-size:12.0pt;
+	font-family:"Aptos",sans-serif;}
+p.font-claude-response-body, li.font-claude-response-body, div.font-claude-response-body
+	{mso-style-name:font-claude-response-body;
+	margin-right:0in;
+	margin-left:0in;
+	font-size:12.0pt;
+	font-family:"Times New Roman",serif;}
+.MsoChpDefault
+	{font-family:"Aptos",sans-serif;}
+.MsoPapDefault
+	{margin-bottom:8.0pt;
+	line-height:115%;}
+@page WordSection1
+	{size:8.5in 11.0in;
+	margin:1.0in 1.0in 1.0in 1.0in;}
+div.WordSection1
+	{page:WordSection1;}
+ /* List Definitions */
+ ol
+	{margin-bottom:0in;}
+ul
+	{margin-bottom:0in;}
+-->
+</style>
+
+</head>
+
+<body lang=EN-US style='word-wrap:break-word'>
+
+<div class=WordSection1>
+
+<p class=font-claude-response-body><span style='font-size:24.0pt'>SMS Tool
+Discussion with Claude Sonnet</span> <br>
+Sonnet 4.6 extended<br>
+<br>
+Great engineering problem — and you're right that access is the first hurdle.
+Here are the realistic approaches, roughly in order of power vs. complexity:</p>
+
+<div class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+line-height:normal'><span style='font-family:"Times New Roman",serif'>
+
+<hr size=0 width="100%" align=center>
+
+</span></div>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-size:18.0pt;
+font-family:"Times New Roman",serif'>Option 1: SQLite Direct Read (Most
+Powerful)</span></b></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>iMessage
+stores everything in a local SQLite database:</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>~/Library/Messages/chat.db</span></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>This
+is the richest approach for categorization — full message history, timestamps,
+sender info, attachments, thread structure. You'd need to grant your agent <b>Full
+Disk Access</b> in System Settings → Privacy &amp; Security. From there it's
+just SQL:</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>sql</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>SELECT
+message.text, handle.id, message.date</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>FROM message</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>JOIN handle ON
+message.handle_id = handle.rowid</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>ORDER BY
+message.date DESC;</span></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>The
+date column is in Apple's epoch format (nanoseconds since Jan 1, 2001) so you'd
+convert it. This is the right foundation for a categorization pipeline — feed
+chunks to an LLM, get structured labels back.</span></p>
+
+<div class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+line-height:normal'><span style='font-family:"Times New Roman",serif'>
+
+<hr size=0 width="100%" align=center>
+
+</span></div>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-size:18.0pt;
+font-family:"Times New Roman",serif'>Option 2: AppleScript</span></b></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>Good
+for <b>sending</b> and basic <b>reading</b> without Full Disk Access:</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>applescript</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>tell application
+&quot;Messages&quot;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    set theChats
+to every chat</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    repeat with
+aChat in theChats</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>        log name
+of aChat</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    end repeat</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>end tell</span></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>More
+limited than the SQLite approach — you can't easily bulk-export message text —
+but it's sandboxed and doesn't require elevated permissions.</span></p>
+
+<div class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+line-height:normal'><span style='font-family:"Times New Roman",serif'>
+
+<hr size=0 width="100%" align=center>
+
+</span></div>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-size:18.0pt;
+font-family:"Times New Roman",serif'>Option 3: Accessibility API (UI
+Automation)</span></b></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>This
+is essentially what Cowork does under the hood — use macOS Accessibility to
+drive the Messages UI programmatically. Python via </span><span
+style='font-size:10.0pt;font-family:"Courier New"'>pyautogui</span><span
+style='font-family:"Times New Roman",serif'> or the native </span><span
+style='font-size:10.0pt;font-family:"Courier New"'>ApplicationServices</span><span
+style='font-family:"Times New Roman",serif'> framework. Works but is fragile
+(UI changes break it) and slow for bulk processing.</span></p>
+
+<div class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+line-height:normal'><span style='font-family:"Times New Roman",serif'>
+
+<hr size=0 width="100%" align=center>
+
+</span></div>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-size:18.0pt;
+font-family:"Times New Roman",serif'>Option 4: Shortcuts + Automation</span></b></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>Apple
+Shortcuts has a &quot;Get Messages&quot; action. You could trigger a Shortcut
+from Python via </span><span style='font-size:10.0pt;font-family:"Courier New"'>subprocess</span><span
+style='font-family:"Times New Roman",serif'> calling </span><span
+style='font-size:10.0pt;font-family:"Courier New"'>shortcuts run</span><span
+style='font-family:"Times New Roman",serif'>. Limited but sandboxed and
+Apple-blessed.</span></p>
+
+<div class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+line-height:normal'><span style='font-family:"Times New Roman",serif'>
+
+<hr size=0 width="100%" align=center>
+
+</span></div>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-size:18.0pt;
+font-family:"Times New Roman",serif'>Recommended Stack for Your Use Case</span></b></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>Given
+your background, I'd go:</span></p>
+
+<ol start=1 type=1>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Python agent reads </span></b><b><span
+     style='font-size:10.0pt;font-family:"Courier New"'>chat.db</span></b><span
+     style='font-family:"Times New Roman",serif'> via </span><span
+     style='font-size:10.0pt;font-family:"Courier New"'>sqlite3</span><span
+     style='font-family:"Times New Roman",serif'> (stdlib, no deps)</span></li>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Chunked LangChain pipeline</span></b><span
+     style='font-family:"Times New Roman",serif'> — you already have the LCEL
+     patterns from sushi-rag</span></li>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Claude API call</span></b><span style='font-family:
+     "Times New Roman",serif'> to classify/categorize each thread</span></li>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Output to JSON or a simple local vector store</span></b><span
+     style='font-family:"Times New Roman",serif'> (ChromaDB) for querying</span></li>
+</ol>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>The
+main gotcha is that </span><span style='font-size:10.0pt;font-family:"Courier New"'>chat.db</span><span
+style='font-family:"Times New Roman",serif'> requires Full Disk Access, and on
+macOS Sequoia (which you're on) you'll need to explicitly grant that to
+Terminal or your Python runtime in System Settings.</span></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>Want
+me to sketch out the agent scaffold?</span></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>What's
+the best way to access SQLite at ~/Library/Messages/chat.db ?</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>9:51 AM</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>Recognized straightforward
+technical database query</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>Recognized straightforward
+technical database query</span></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>Python's
+built-in </span><span style='font-size:10.0pt;font-family:"Courier New"'>sqlite3</span><span
+style='font-family:"Times New Roman",serif'> module is the simplest and best
+option — no dependencies, no install, already on your Mac.</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>python</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>import sqlite3</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>import os</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>from datetime
+import datetime, timedelta</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&nbsp;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'># Apple's epoch
+starts Jan 1, 2001 — convert to Unix timestamp</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>APPLE_EPOCH_OFFSET
+= 978307200</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&nbsp;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>def
+apple_ts_to_datetime(ts):</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    if ts is
+None:</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>        return
+None</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    # Stored in
+nanoseconds in newer macOS versions</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    ts_seconds =
+ts / 1e9</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    return
+datetime.utcfromtimestamp(ts_seconds + APPLE_EPOCH_OFFSET)</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&nbsp;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>db_path =
+os.path.expanduser(&quot;~/Library/Messages/chat.db&quot;)</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>conn =
+sqlite3.connect(db_path)</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>conn.row_factory
+= sqlite3.Row  # access columns by name, not index</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>cursor =
+conn.cursor()</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&nbsp;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>cursor.execute(&quot;&quot;&quot;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    SELECT</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+message.rowid,</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+message.text,</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+message.is_from_me,</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+message.date,</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>        handle.id
+AS sender</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    FROM message</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    LEFT JOIN
+handle ON message.handle_id = handle.rowid</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    WHERE
+message.text IS NOT NULL</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    ORDER BY
+message.date DESC</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    LIMIT 100</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&quot;&quot;&quot;)</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&nbsp;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>for row in
+cursor.fetchall():</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    print({</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+&quot;sender&quot;: row[&quot;sender&quot;],</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+&quot;text&quot;: row[&quot;text&quot;],</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+&quot;is_from_me&quot;: bool(row[&quot;is_from_me&quot;]),</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+&quot;date&quot;: apple_ts_to_datetime(row[&quot;date&quot;])</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    })</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&nbsp;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>conn.close()</span></p>
+
+<div class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+line-height:normal'><span style='font-family:"Times New Roman",serif'>
+
+<hr size=0 width="100%" align=center>
+
+</span></div>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-size:18.0pt;
+font-family:"Times New Roman",serif'>Key Things to Know About </span></b><b><span
+style='font-size:10.0pt;font-family:"Courier New"'>chat.db</span></b></p>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-family:"Times New Roman",serif'>Main
+tables you'll use:</span></b></p>
+
+<table class=MsoNormalTable border=0 cellpadding=0>
+ <thead>
+  <tr>
+   <td style='padding:.75pt .75pt .75pt .75pt'>
+   <p class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+   line-height:normal'><b><span style='font-family:"Times New Roman",serif'>Table</span></b></p>
+   </td>
+   <td style='padding:.75pt .75pt .75pt .75pt'>
+   <p class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+   line-height:normal'><b><span style='font-family:"Times New Roman",serif'>What's
+   in it</span></b></p>
+   </td>
+  </tr>
+ </thead>
+ <tr>
+  <td style='padding:.75pt .75pt .75pt .75pt'>
+  <p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+  style='font-size:10.0pt;font-family:"Courier New"'>message</span></p>
+  </td>
+  <td style='padding:.75pt .75pt .75pt .75pt'>
+  <p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+  style='font-family:"Times New Roman",serif'>Every message — text, date,
+  is_from_me, flags</span></p>
+  </td>
+ </tr>
+ <tr>
+  <td style='padding:.75pt .75pt .75pt .75pt'>
+  <p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+  style='font-size:10.0pt;font-family:"Courier New"'>handle</span></p>
+  </td>
+  <td style='padding:.75pt .75pt .75pt .75pt'>
+  <p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+  style='font-family:"Times New Roman",serif'>Phone numbers / Apple IDs of
+  contacts</span></p>
+  </td>
+ </tr>
+ <tr>
+  <td style='padding:.75pt .75pt .75pt .75pt'>
+  <p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+  style='font-size:10.0pt;font-family:"Courier New"'>chat</span></p>
+  </td>
+  <td style='padding:.75pt .75pt .75pt .75pt'>
+  <p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+  style='font-family:"Times New Roman",serif'>Conversation threads</span></p>
+  </td>
+ </tr>
+ <tr>
+  <td style='padding:.75pt .75pt .75pt .75pt'>
+  <p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+  style='font-size:10.0pt;font-family:"Courier New"'>chat_message_join</span></p>
+  </td>
+  <td style='padding:.75pt .75pt .75pt .75pt'>
+  <p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+  style='font-family:"Times New Roman",serif'>Links messages to threads</span></p>
+  </td>
+ </tr>
+ <tr>
+  <td style='padding:.75pt .75pt .75pt .75pt'>
+  <p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+  style='font-size:10.0pt;font-family:"Courier New"'>chat_handle_join</span></p>
+  </td>
+  <td style='padding:.75pt .75pt .75pt .75pt'>
+  <p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+  style='font-family:"Times New Roman",serif'>Links handles to threads</span></p>
+  </td>
+ </tr>
+</table>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-family:"Times New Roman",serif'>To
+get full threads (not just messages):</span></b></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>python</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>cursor.execute(&quot;&quot;&quot;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    SELECT</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+chat.chat_identifier,</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+message.text,</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+message.is_from_me,</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>       
+message.date,</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>        handle.id
+AS sender</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    FROM message</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    JOIN
+chat_message_join ON message.rowid = chat_message_join.message_id</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    JOIN chat ON
+chat_message_join.chat_id = chat.rowid</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    LEFT JOIN
+handle ON message.handle_id = handle.rowid</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    WHERE
+message.text IS NOT NULL</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>    ORDER BY
+chat.rowid, message.date ASC</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&quot;&quot;&quot;)</span></p>
+
+<div class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+line-height:normal'><span style='font-family:"Times New Roman",serif'>
+
+<hr size=0 width="100%" align=center>
+
+</span></div>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-size:18.0pt;
+font-family:"Times New Roman",serif'>Gotchas</span></b></p>
+
+<ul type=disc>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Full Disk Access</span></b><span
+     style='font-family:"Times New Roman",serif'> — grant it to Terminal (or VS
+     Code / your IDE) in System Settings → Privacy &amp; Security → Full Disk
+     Access. Without it you'll get a permissions error.</span></li>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Open the DB read-only</span></b><span
+     style='font-family:"Times New Roman",serif'> to avoid any risk of
+     corruption: </span><span style='font-size:10.0pt;font-family:"Courier New"'>sqlite3.connect(f&quot;file:{db_path}?mode=ro&quot;,
+     uri=True)</span></li>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Reactions and tapbacks</span></b><span
+     style='font-family:"Times New Roman",serif'> are stored as messages with </span><span
+     style='font-size:10.0pt;font-family:"Courier New"'>associated_message_type
+     != 0</span><span style='font-family:"Times New Roman",serif'> — filter
+     those out with </span><span style='font-size:10.0pt;font-family:"Courier New"'>WHERE
+     message.associated_message_type = 0</span></li>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Attachments</span></b><span style='font-family:
+     "Times New Roman",serif'> are a separate table (</span><span
+     style='font-size:10.0pt;font-family:"Courier New"'>attachment</span><span
+     style='font-family:"Times New Roman",serif'>) joined via </span><span
+     style='font-size:10.0pt;font-family:"Courier New"'>message_attachment_join</span></li>
+</ul>
+
+<div class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+line-height:normal'><span style='font-family:"Times New Roman",serif'>
+
+<hr size=0 width="100%" align=center>
+
+</span></div>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>Want
+me to build out the full agent scaffold from here — reading threads, chunking
+by sender/date, and piping to the Claude API for categorization?</span></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>Yes
+please! I've already given Cursor full disk access.</span></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>I
+would like to be able to read the latest messages run rules against it to
+attributize the message if message gets assigned certain attributes, like STOP
+and/or SPAM then respond with a STOP message and mark them as SPAM to prevent
+future sendings and then ultimately delete the mesage.</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>9:57 AM</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>Architected modular Python agent
+with database reading, API classification, and AppleScript automation</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>Architected modular Python agent
+with database reading, API classification, and AppleScript automation</span></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>Let
+me build this as a proper multi-file project. Here's the architecture before I
+write the code:</span></p>
+
+<ul type=disc>
+ <li class=MsoNormal style='line-height:normal'><span style='font-size:10.0pt;
+     font-family:"Courier New"'>reader.py</span><span style='font-family:"Times New Roman",serif'>
+     — pulls latest messages from </span><span style='font-size:10.0pt;
+     font-family:"Courier New"'>chat.db</span></li>
+ <li class=MsoNormal style='line-height:normal'><span style='font-size:10.0pt;
+     font-family:"Courier New"'>classifier.py</span><span style='font-family:
+     "Times New Roman",serif'> — sends to Claude API, returns attributes (SPAM,
+     STOP, etc.)</span></li>
+ <li class=MsoNormal style='line-height:normal'><span style='font-size:10.0pt;
+     font-family:"Courier New"'>rules.py</span><span style='font-family:"Times New Roman",serif'>
+     — configurable rules that map attributes → actions</span></li>
+ <li class=MsoNormal style='line-height:normal'><span style='font-size:10.0pt;
+     font-family:"Courier New"'>actions.py</span><span style='font-family:"Times New Roman",serif'>
+     — AppleScript layer: send reply, block sender, delete thread</span></li>
+ <li class=MsoNormal style='line-height:normal'><span style='font-size:10.0pt;
+     font-family:"Courier New"'>main.py</span><span style='font-family:"Times New Roman",serif'>
+     — orchestrates the full pipeline</span></li>
+</ul>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>Created 7 files, ran 2 commands,
+read a file</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>Created 7 files, ran 2 commands,
+read a file</span></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>All
+7 files are ready. Here's the quick-start:</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-family:"Times New Roman",serif'>bash</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'># 1. Drop the
+folder into your project in Cursor</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&nbsp;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'># 2. Set your API
+key</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>export
+ANTHROPIC_API_KEY=sk-ant-...</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&nbsp;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'># 3. Dry run
+first — see what it would do without acting</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>python main.py
+--dry-run</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&nbsp;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'># 4. Run for real</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>python main.py</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>&nbsp;</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'># 5. Run every 2
+minutes in the background</span></p>
+
+<p class=MsoNormal style='margin-bottom:0in;line-height:normal'><span
+style='font-size:10.0pt;font-family:"var(--font-mono)",serif'>python main.py
+--loop 120</span></p>
+
+<div class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+line-height:normal'><span style='font-family:"Times New Roman",serif'>
+
+<hr size=0 width="100%" align=center>
+
+</span></div>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-size:18.0pt;
+font-family:"Times New Roman",serif'>One Honest Caveat on Blocking</span></b></p>
+
+<p class=MsoNormal style='line-height:normal'><span style='font-family:"Times New Roman",serif'>True
+programmatic blocking (the equivalent of tapping &quot;Block Contact&quot; in
+Messages) requires either Accessibility API access or a native Swift bridge —
+AppleScript alone can't reliably trigger it. The agent handles this
+pragmatically: it writes blocked senders to </span><span style='font-size:10.0pt;
+font-family:"Courier New"'>blocked_senders.txt</span><span style='font-family:
+"Times New Roman",serif'> and skips them on every future run. For full
+blocking, open the thread in Messages before it gets deleted and hit Details →
+Block Contact. That's a one-time manual step per spammer.</span></p>
+
+<div class=MsoNormal align=center style='margin-bottom:0in;text-align:center;
+line-height:normal'><span style='font-family:"Times New Roman",serif'>
+
+<hr size=0 width="100%" align=center>
+
+</span></div>
+
+<p class=MsoNormal style='line-height:normal'><b><span style='font-size:18.0pt;
+font-family:"Times New Roman",serif'>Easy Things to Extend</span></b></p>
+
+<ul type=disc>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Add rules</span></b><span style='font-family:
+     "Times New Roman",serif'> in </span><span style='font-size:10.0pt;
+     font-family:"Courier New"'>rules.py</span><span style='font-family:"Times New Roman",serif'>
+     — e.g. auto-delete anything from area codes you don't recognize</span></li>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Adjust attributes</span></b><span
+     style='font-family:"Times New Roman",serif'> in the classifier system
+     prompt in </span><span style='font-size:10.0pt;font-family:"Courier New"'>classifier.py</span></li>
+ <li class=MsoNormal style='line-height:normal'><b><span style='font-family:
+     "Times New Roman",serif'>Run as a LaunchAgent</span></b><span
+     style='font-family:"Times New Roman",serif'> (macOS cron equivalent) so it
+     fires automatically in the background — happy to scaffold that </span><span
+     style='font-size:10.0pt;font-family:"Courier New"'>plist</span><span
+     style='font-family:"Times New Roman",serif'> if you want it</span></li>
+</ul>
+
+<p class=MsoNormal>&nbsp;</p>
+
+</div>
+
+</body>
+
+</html>

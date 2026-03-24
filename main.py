@@ -82,7 +82,12 @@ def process_once(limit: int, lookback: int):
             continue
 
         # 4. Evaluate rules → get actions
-        action_list = rules.evaluate(msg)
+        action_list, matched_rule_names = rules.evaluate_detailed(msg)
+        if config.DRY_RUN:
+            if matched_rule_names:
+                logger.info(f"  → Matched rules: {matched_rule_names}")
+            else:
+                logger.info("  → Matched rules: (none — default log_only)")
         logger.info(f"  → Actions: {action_list}")
 
         if not action_list or action_list == ["log_only"]:
@@ -132,5 +137,5 @@ def main():
         process_once(args.limit, args.lookback)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

@@ -1,23 +1,63 @@
 # config.py
 import os
+from pathlib import Path
 
-# Anthropic API key — set in your environment or .env file
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+from pydantic import Field, field_validator
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
-# How many recent messages to pull per run
-MESSAGE_FETCH_LIMIT = 50
+_ROOT = Path(__file__).resolve().parent
 
-# How many minutes back to look (avoids reprocessing old messages)
-LOOKBACK_MINUTES = 60
 
-# Path to iMessage database
-CHAT_DB_PATH = os.path.expanduser("~/Library/Messages/chat.db")
+class Settings(BaseSettings):
+    """App settings from the project-root `.env` file only (not from the shell environment)."""
 
-# STOP reply text
-STOP_REPLY_TEXT = "STOP"
+    model_config = SettingsConfigDict(
+        env_file=_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
-# Dry run mode — if True, logs actions but does NOT send, block, or delete
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # Drop env_settings so ANTHROPIC_API_KEY etc. are not read from os.environ.
+        return init_settings, dotenv_settings, file_secret_settings
+
+    anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
+    message_fetch_limit: int = Field(default=50, validation_alias="MESSAGE_FETCH_LIMIT")
+    lookback_minutes: int = Field(default=60, validation_alias="LOOKBACK_MINUTES")
+    chat_db_path: str = Field(
+        default_factory=lambda: os.path.expanduser("~/Library/Messages/chat.db"),
+        validation_alias="CHAT_DB_PATH",
+    )
+    stop_reply_text: str = Field(default="STOP", validation_alias="STOP_REPLY_TEXT")
+    log_file: str = Field(default="sms_agent.log", validation_alias="LOG_FILE")
+
+    @field_validator("chat_db_path", mode="before")
+    @classmethod
+    def expand_chat_path(cls, v: object) -> object:
+        if isinstance(v, str):
+            return os.path.expanduser(v)
+        return v
+
+
+settings = Settings()
+
+# Module-level aliases (existing imports); `DRY_RUN` is toggled at runtime by `main.py`.
+ANTHROPIC_API_KEY = settings.anthropic_api_key
+MESSAGE_FETCH_LIMIT = settings.message_fetch_limit
+LOOKBACK_MINUTES = settings.lookback_minutes
+CHAT_DB_PATH = settings.chat_db_path
+STOP_REPLY_TEXT = settings.stop_reply_text
+LOG_FILE = settings.log_file
 DRY_RUN = False
-
-# Log file
-LOG_FILE = "sms_agent.log"
