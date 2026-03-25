@@ -27,7 +27,7 @@ From the **project root**, with the venv activated:
 | `poe cov` | Tests + coverage (≥80%, terminal report) |
 | `poe cov-html` | Same as `cov`, plus `htmlcov/` |
 | `poe dry-run` | `python main.py --dry-run` |
-| `poe run` | `python main.py` |
+| `poe run-political` | `python main.py` (pass flags directly: `poe run-political --lookback 10080 --limit 500` — no `--` before the flags) |
 | `poe preview-recent` | `scripts/dry_run_recent.py` — tags, rules, **Actions (execution)** (read-only DB; Claude unless `*-offline`) |
 | `poe preview-recent-offline` | Same with **`--no-classify`** |
 | `poe preview-recent-compact` | **`--compact`** output |

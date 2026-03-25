@@ -125,6 +125,18 @@ def test_classify_message_adds_political_for_us_red(monkeypatch):
     assert "POLITICAL" in attrs
 
 
+def test_classify_message_adds_political_for_vote_red_domain(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["SPAM"], "reason": "bulk"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        attrs, _ = classifier.classify_message("Vote now https://vote-red.io/tg9ri9")
+
+    assert "POLITICAL" in attrs
+    assert "SPAM" in attrs
+
+
 def test_classify_message_http_error(monkeypatch):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "k")
 

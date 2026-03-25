@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 import config
 
-SYSTEM_PROMPT = """You are a message classification agent. 
+SYSTEM_PROMPT = """You are a message classification agent.
 Given an SMS or iMessage, return a JSON object with this exact shape:
 
 {
@@ -30,25 +30,69 @@ Given an SMS or iMessage, return a JSON object with this exact shape:
 }
 
 Available attributes (assign all that apply):
-- SPAM: unsolicited bulk/commercial message
+- SPAM: unsolicited bulk/commercial message (many political SMS count as both SPAM and POLITICAL)
 - STOP: message is an opt-out, unsubscribe, or the word STOP itself
 - SCAM: fraud, phishing, impersonation, fake prize, fake package delivery
-- POLITICAL: political campaign or polling message; also if the text contains **us-red** or **White House** (case-insensitive)
+- POLITICAL: partisan or civic political content — campaigns, PACs, party committees, fundraising,
+  petitions, surveys, "contact your representative", get-out-the-vote, named politicians or
+  federal offices (President, VP, Speaker, Senator, Congress, White House, Supreme Court in a
+  civic/policy sense), party labels (GOP, Republican, Democrat, DNC, RNC), or links/domains
+  typical of political texting (e.g. vote-red, win-red, redtxt, short .red links, "save america").
+  Use POLITICAL even if the message also feels like spam or promo.
 - PROMO: promotional offer from a real business (not spam)
 - LEGIT: clearly legitimate transactional message (bank OTP, delivery confirmation, appointment reminder)
-- PERSONAL: appears to be from a real known person
+- PERSONAL: one-to-one message from someone you know — NOT bulk political texts that insert a first name
 - UNKNOWN: cannot determine
 
 Rules:
 - Always assign at least one attribute.
 - SPAM and SCAM can coexist.
 - LEGIT and SPAM cannot coexist.
+- Political fundraising / party blast SMS: include POLITICAL; add SPAM if unsolicited bulk.
 - Return ONLY the JSON object. No markdown, no preamble.
 """
 
 
-# If any phrase appears in the message (case-insensitive), POLITICAL is merged into attributes.
-POLITICAL_TEXT_MARKERS: tuple[str, ...] = ("us-red", "white house")
+# If any substring appears in the message (case-insensitive), POLITICAL is merged after the model
+# returns (catches common PAC / party SMS the model still misses).
+POLITICAL_TEXT_MARKERS: tuple[str, ...] = (
+    "us-red",
+    "white house",
+    "vote-red",
+    "win-red",
+    "redtxt",
+    "clkred",
+    "txtred",
+    "righttxt",
+    ".red/",
+    "maga",
+    "house gop",
+    "senate gop",
+    "critical house",
+    "save america act",
+    "voter id",
+    "voter verification",
+    "gop races",
+    "republican races",
+    "contact congress",
+    "congress needs",
+    "expel ",
+    "from congress",
+    "speaker gingrich",
+    "vice president vance",
+    "jd vance",
+    "j.d. vance",
+    "president trump",
+    "pres. trump",
+    "senator kennedy",
+    "john kennedy",
+    "juan ciscomani",
+    "tulsi gabbard",
+    "supreme court ruling",
+    "ban china",
+    "u.s. farmland",
+    "i.c.e. tumbler",
+)
 
 
 def _merge_political_keywords(text: str, attributes: list[str]) -> list[str]:

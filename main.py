@@ -4,10 +4,11 @@
 SMS Agent — reads recent iMessages, classifies them, and takes action.
 
 Usage:
-    python main.py               # run once
+    python main.py               # run once (default policy: political)
     python main.py --dry-run     # preview actions without executing
-    python main.py --loop 60     # run every 60 seconds
-    python main.py --limit 100   # process last 100 messages
+    python main.py --policy spam   # second pass: SPAM / SCAM (after political)
+    python main.py --loop 60       # run every 60 seconds
+    python main.py --limit 100     # process last 100 messages
     python main.py --lookback 120  # look back 120 minutes
 """
 
@@ -34,10 +35,13 @@ logging.basicConfig(
 logger = logging.getLogger("sms_agent")
 
 
-def process_once(limit: int, lookback: int):
+def process_once(limit: int, lookback: int, policy: str = "political"):
     """Single pass: read → classify → evaluate rules → act."""
 
-    logger.info(f"--- SMS Agent run | lookback={lookback}m | limit={limit} | dry_run={config.DRY_RUN} ---")
+    logger.info(
+        f"--- SMS Agent run | policy={policy} | lookback={lookback}m | limit={limit} | "
+        f"dry_run={config.DRY_RUN} ---"
+    )
 
     # 1. Load blocklist — skip already-blocked senders
     blocklist = actions.load_blocklist()
@@ -59,6 +63,7 @@ def process_once(limit: int, lookback: int):
     logger.info(f"Found {len(messages)} message(s) to process.")
 
     stats = {"total": len(messages), "actioned": 0, "skipped": 0, "errors": 0}
+    pending: list[tuple[Message, list[str]]] = []
 
     for msg in messages:
         sender_id = msg.sender or msg.chat_identifier
@@ -82,7 +87,7 @@ def process_once(limit: int, lookback: int):
             continue
 
         # 4. Evaluate rules → get actions
-        action_list, matched_rule_names = rules.evaluate_detailed(msg)
+        action_list, matched_rule_names = rules.evaluate_detailed(msg, policy=policy)
         if config.DRY_RUN:
             if matched_rule_names:
                 logger.info(f"  → Matched rules: {matched_rule_names}")
@@ -94,8 +99,18 @@ def process_once(limit: int, lookback: int):
             stats["skipped"] += 1
             continue
 
-        # 5. Execute actions
-        results = actions.execute_actions(msg, action_list)
+        pending.append((msg, action_list))
+
+    # One quit check before any chat.db archives: send_stop later reopens Messages, which used to
+    # re-trigger the guard on every following message.
+    batch_sqlite_ok: bool | None = None
+    if not config.DRY_RUN and pending and any(
+        actions.action_list_needs_sqlite_archive(al) for _, al in pending
+    ):
+        batch_sqlite_ok = actions.messages_quit_guard()
+
+    for msg, action_list in pending:
+        results = actions.execute_actions(msg, action_list, batch_sqlite_ok=batch_sqlite_ok)
         if any(results.values()):
             stats["actioned"] += 1
         else:
@@ -118,6 +133,13 @@ def main():
                         help="Max messages to process per run")
     parser.add_argument("--lookback", type=int, default=config.LOOKBACK_MINUTES,
                         help="Minutes of history to look back")
+    parser.add_argument(
+        "--policy",
+        choices=["political", "spam"],
+        default="political",
+        help="Rule set: political (archive/STOP/block for POLITICAL) or spam (STOP/block/delete for SPAM/SCAM). "
+        "Run political first, then spam in a separate pass.",
+    )
     args = parser.parse_args()
 
     if args.dry_run:
@@ -128,13 +150,13 @@ def main():
         logger.info(f"Running in loop mode every {args.loop}s. Ctrl+C to stop.")
         while True:
             try:
-                process_once(args.limit, args.lookback)
+                process_once(args.limit, args.lookback, args.policy)
                 time.sleep(args.loop)
             except KeyboardInterrupt:
                 logger.info("Stopped.")
                 break
     else:
-        process_once(args.limit, args.lookback)
+        process_once(args.limit, args.lookback, args.policy)
 
 
 if __name__ == "__main__":  # pragma: no cover

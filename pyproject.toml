@@ -14,12 +14,17 @@ test-quiet = "pytest tests/ -q"
 cov = "pytest tests/ --cov=reader --cov=classifier --cov=rules --cov=actions --cov=config --cov=main --cov-report=term-missing --cov-fail-under=80"
 cov-html = "pytest tests/ --cov=reader --cov=classifier --cov=rules --cov=actions --cov=config --cov=main --cov-report=term-missing --cov-report=html --cov-fail-under=80"
 dry-run = "python main.py --dry-run"
+dry-run-spam = "python main.py --dry-run --policy spam"
 # Recent messages: tags + matched rules + planned actions + SQLite subset (read-only DB; Claude unless --no-classify)
 preview-recent = "python scripts/dry_run_recent.py"
 preview-recent-offline = "python scripts/dry_run_recent.py --no-classify"
 preview-recent-compact = "python scripts/dry_run_recent.py --compact"
 preview-recent-compact-offline = "python scripts/dry_run_recent.py --compact --no-classify"
-run = "python main.py"
+preview-recent-spam = "python scripts/dry_run_recent.py --policy spam"
+preview-recent-spam-offline = "python scripts/dry_run_recent.py --policy spam --no-classify"
+# Extra args append to the command — do not use a bare `--` (it is passed to main.py and breaks argparse).
+run-political = "python main.py"
+run-spam = "python main.py --policy spam"
 # Copy CHAT_DB_PATH (from .env) to backups/chat.db.UTC-<YYYY-MM-DDTHH-MM-SSZ>.bak
 backup-db = "python scripts/backup_chat_db.py"
 # Quit Messages (iMessage) if running — run before backup-db / archive (macOS)

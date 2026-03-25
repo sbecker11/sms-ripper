@@ -103,7 +103,9 @@ def row_to_message(row: tuple) -> Message:
     )
 
 
-def classify_and_evaluate(msg: Message, *, no_classify: bool) -> tuple[list[str], list[str], list[str]]:
+def classify_and_evaluate(
+    msg: Message, *, no_classify: bool, policy: str = "political"
+) -> tuple[list[str], list[str], list[str]]:
     """Set msg.attributes; return (attributes, matched_rule_names, actions)."""
     if no_classify:
         msg.attributes = ["UNKNOWN"]
@@ -113,7 +115,7 @@ def classify_and_evaluate(msg: Message, *, no_classify: bool) -> tuple[list[str]
             msg.attributes = attrs
         except Exception:
             msg.attributes = ["UNKNOWN"]
-    action_list, matched_names = rules.evaluate_detailed(msg)
+    action_list, matched_names = rules.evaluate_detailed(msg, policy=policy)
     return msg.attributes, matched_names, action_list
 
 
@@ -147,6 +149,12 @@ def main() -> int:
         action="store_true",
         help="Only print Attributes / Matched rules / Actions per message (plus one header line each).",
     )
+    parser.add_argument(
+        "--policy",
+        choices=["political", "spam"],
+        default="political",
+        help="Rule set: political (POLITICAL → archive/STOP/block) or spam (SPAM/STOP/SCAM). Run political first.",
+    )
     args = parser.parse_args()
 
     if not args.no_classify and not config.ANTHROPIC_API_KEY:
@@ -177,7 +185,7 @@ def main() -> int:
     width = terminal_width()
     if not args.compact:
         print(
-            "Dry-run preview (no actions executed). "
+            f"Dry-run preview (no actions executed) | policy={args.policy}. "
             "SQLite = direct chat.db writes; other actions use AppleScript or local files.\n"
         )
 
@@ -198,7 +206,7 @@ def main() -> int:
             if len(preview) > 100:
                 preview = preview[:97] + "..."
             attrs, matched_names, action_list = classify_and_evaluate(
-                msg, no_classify=args.no_classify
+                msg, no_classify=args.no_classify, policy=args.policy
             )
             names_s = ", ".join(matched_names) if matched_names else "(none — default log_only)"
             if i:
@@ -229,7 +237,7 @@ def main() -> int:
                 msg.attributes = ["UNKNOWN"]
                 tag_lines = [f"Tags: (classification error: {e})"]
 
-        action_list, matched_names = rules.evaluate_detailed(msg)
+        action_list, matched_names = rules.evaluate_detailed(msg, policy=args.policy)
         names_s = ", ".join(matched_names) if matched_names else "(none — default log_only)"
         ordered = actions._execution_action_order(action_list)
         db_part = [a for a in ordered if a in SQLITE_DB_ACTIONS]

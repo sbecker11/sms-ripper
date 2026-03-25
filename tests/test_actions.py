@@ -102,25 +102,45 @@ def test_run_applescript_generic_exception(monkeypatch):
     assert ok is False and "nope" in msg
 
 
-def test_send_stop_skipped_when_messages_running_non_interactive(monkeypatch):
+def test_send_stop_runs_without_quit_guard_when_only_send_stop(monkeypatch):
+    """Archive is what needs Messages quit; send_stop uses AppleScript and may run while Messages is up."""
     monkeypatch.setattr(config, "DRY_RUN", False)
     monkeypatch.setattr(actions, "_is_messages_running", lambda: True)
     monkeypatch.setattr(actions.sys, "stdin", io.StringIO())
     called: list[str] = []
 
-    def no_applescript(script: str):
+    def capture(script: str):
         called.append(script)
         return True, ""
 
-    monkeypatch.setattr(actions, "_run_applescript", no_applescript)
+    monkeypatch.setattr(actions, "_run_applescript", capture)
 
     msg = _sample_message()
     results = actions.execute_actions(msg, ["send_stop"])
-    assert results["send_stop"] is False
-    assert called == []
+    assert results["send_stop"] is True
+    assert len(called) >= 1
 
 
-def test_delete_thread_skipped_when_messages_running_non_interactive(monkeypatch):
+def test_archive_skipped_when_messages_running_non_interactive(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.setattr(actions, "_is_messages_running", lambda: True)
+    monkeypatch.setattr(actions.sys, "stdin", io.StringIO())
+    ran: list[str] = []
+
+    monkeypatch.setitem(
+        actions.ACTION_MAP,
+        "archive",
+        lambda m: ran.append("archive") or True,
+    )
+    msg = _sample_message()
+    results = actions.execute_actions(msg, ["archive"])
+    assert results["archive"] is False
+    assert ran == []
+
+
+def test_delete_thread_runs_without_sqlite_quit_guard(monkeypatch):
+    """delete uses AppleScript, not direct sqlite; no Messages-quit prompt for delete alone."""
     monkeypatch.setattr(config, "DRY_RUN", False)
     monkeypatch.setattr(actions, "_is_messages_running", lambda: True)
     called: list[str] = []
@@ -132,8 +152,8 @@ def test_delete_thread_skipped_when_messages_running_non_interactive(monkeypatch
 
     msg = _sample_message()
     results = actions.execute_actions(msg, ["delete"])
-    assert results["delete"] is False
-    assert called == []
+    assert results["delete"] is True
+    assert len(called) >= 1
 
 
 def test_messages_quit_guard_interactive_succeeds_after_quit(monkeypatch):
@@ -192,6 +212,35 @@ def test_delete_thread_success(monkeypatch):
     msg = _sample_message()
     assert actions.delete_thread(msg) is True
     assert "delete" in msg.actions_taken
+
+
+def test_execute_actions_batch_sqlite_ok_true_skips_guard(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    calls = {"n": 0}
+
+    def guard() -> bool:
+        calls["n"] += 1
+        return True
+
+    monkeypatch.setattr(actions, "_messages_quit_guard", guard)
+    monkeypatch.setattr(actions, "_is_messages_running", lambda: True)
+    arch_ran: list[int] = []
+    monkeypatch.setitem(
+        actions.ACTION_MAP,
+        "archive",
+        lambda m: arch_ran.append(1) or True,
+    )
+    msg = _sample_message()
+    results = actions.execute_actions(msg, ["archive"], batch_sqlite_ok=True)
+    assert calls["n"] == 0
+    assert results["archive"] is True
+    assert arch_ran == [1]
+
+
+def test_action_list_needs_sqlite_archive():
+    assert actions.action_list_needs_sqlite_archive(["send_stop", "archive"]) is True
+    assert actions.action_list_needs_sqlite_archive(["send_stop", "delete"]) is False
 
 
 def test_execution_action_order_archive_before_delete():

@@ -1,9 +1,9 @@
 # SMS Agent
 
 An AI-powered iMessage agent that reads recent messages, classifies them using Claude,
-applies configurable rules, and takes action — e.g. **archiving** rows into `<TAG>_archive`
-tables in `chat.db`, sending **STOP**, **blocklist** entries, **delete thread** (AppleScript),
-and **log-only** paths.
+applies configurable rules, and takes action. By default, **only messages tagged POLITICAL**
+(non-personal) are actioned (**archive**, **STOP**, **blocklist**); other tags (e.g. SPAM alone)
+typically **log only** unless you add more rules in `rules.py`.
 
 ## Setup
 

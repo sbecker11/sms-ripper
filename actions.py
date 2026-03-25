@@ -15,11 +15,14 @@ from reader import Message
 logger = logging.getLogger("sms_agent")
 
 MESSAGES_QUIT_PROMPT = (
-    "This operation writes to or deletes data in the Messages database. "
+    "This operation writes directly to the Messages SQLite database (archive). "
     "The Messages (iMessage) app must be fully terminated first "
     "(Messages → Quit Messages, or Cmd+Q). "
     "While Messages is running, the database may be locked and changes can be unsafe."
 )
+
+# Only archive uses sqlite3 on chat.db from this codebase. (delete uses AppleScript.)
+DIRECT_SQLITE_ARCHIVE_ACTIONS: frozenset[str] = frozenset({"archive"})
 
 
 def _run_applescript(script: str) -> tuple[bool, str]:
@@ -60,6 +63,11 @@ def _is_messages_running() -> bool:
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
         return False
+
+
+def messages_quit_guard() -> bool:
+    """Public alias for use from main when batching archives across a run."""
+    return _messages_quit_guard()
 
 
 def _messages_quit_guard() -> bool:
@@ -225,23 +233,55 @@ def _execution_action_order(actions: list[str]) -> list[str]:
     return archives + rest + deletes
 
 
-def execute_actions(message: Message, actions: list[str]) -> dict[str, bool]:
-    """Run all actions for a message. Returns {action: success} map."""
-    actions = _execution_action_order(actions)
-    results: dict[str, bool] = {}
-    db_mutations = {"send_stop", "delete", "archive"}
-    guard_ok = True
-    if not config.DRY_RUN and set(actions) & db_mutations:
-        guard_ok = _messages_quit_guard()
+def action_list_needs_sqlite_archive(actions: list[str]) -> bool:
+    """True if ordered actions include direct chat.db archive (requires Messages quit)."""
+    return any(a in DIRECT_SQLITE_ARCHIVE_ACTIONS for a in _execution_action_order(actions))
 
-    for action in actions:
+
+def execute_actions(
+    message: Message,
+    actions: list[str],
+    *,
+    batch_sqlite_ok: bool | None = None,
+) -> dict[str, bool]:
+    """
+    Run all actions for a message. Returns {action: success} map.
+
+    batch_sqlite_ok:
+      None — single-message mode: prompt for Messages quit before archive if needed.
+      True — caller already ensured quit for this run (e.g. main.py batched guard).
+      False — skip archive actions (guard failed or declined).
+    """
+    ordered = _execution_action_order(actions)
+    sqlite_actions = [a for a in ordered if a in DIRECT_SQLITE_ARCHIVE_ACTIONS]
+    ui_actions = [a for a in ordered if a not in DIRECT_SQLITE_ARCHIVE_ACTIONS]
+    results: dict[str, bool] = {}
+
+    if not config.DRY_RUN and sqlite_actions:
+        if batch_sqlite_ok is None:
+            if not _messages_quit_guard():
+                for a in sqlite_actions:
+                    results[a] = False
+                sqlite_actions = []
+        elif batch_sqlite_ok is False:
+            for a in sqlite_actions:
+                results[a] = False
+            sqlite_actions = []
+
+    for action in sqlite_actions:
         fn = ACTION_MAP.get(action)
         if not fn:
             logger.warning(f"Unknown action: {action}")
             results[action] = False
             continue
-        if not guard_ok and action in db_mutations:
+        results[action] = fn(message)
+
+    for action in ui_actions:
+        fn = ACTION_MAP.get(action)
+        if not fn:
+            logger.warning(f"Unknown action: {action}")
             results[action] = False
             continue
         results[action] = fn(message)
+
     return results
