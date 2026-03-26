@@ -28,8 +28,13 @@ preview-recent-spam-offline = "python scripts/dry_run_recent.py --policy spam --
 run-political = "python main.py"
 # Phase 2: after STOP/block/etc., set is_read in chat.db so Dock unread may drop while Messages is open.
 run-political-mark-read = "python main.py --mark-read-phase2"
-# Bulk: mark older inbound unread read; keep K newest unread (default 10). Use Messages open; backup first: poe backup-db
+# Mark older inbound unread read in chat.db (keep K newest). Extra flags: see scripts/bulk_mark_read.py --help
 bulk-mark-read = "python scripts/bulk_mark_read.py --keep-unread 10"
+# Read-only unread breakdown vs Dock. Nuclear clear: poe bulk-mark-read --keep-unread 0 --every-inbound
+badge-diagnose = "python scripts/bulk_mark_read.py --diagnose"
+# Backup chat.db, then live-step unread down (Messages open; ~0.12s per row).
+doit = { sequence = ["backup-db", "mark-read-live"] }
+mark-read-live = "python scripts/bulk_mark_read.py --keep-unread 10 --live --delay 0.12"
 run-spam = "python main.py --policy spam"
 # Full pass helpers (same effect as chaining the listed poe tasks; uses python main.py for args).
 run-political-quiet-wide = "python main.py --quiet --lookback 10080 --limit 500"

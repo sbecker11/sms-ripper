@@ -316,8 +316,11 @@ def mark_inbound_read(message: Message) -> bool:
             return False
 
         qcol = '"' + read_col.replace('"', '""') + '"'
+        set_parts = [f"{qcol} = 1"]
+        if "date_read" in cols:
+            set_parts.append("date_read = COALESCE(NULLIF(date_read, 0), date)")
         cur = conn.execute(
-            f"UPDATE message SET {qcol} = 1 WHERE rowid = ? AND IFNULL(is_from_me, 0) = 0",
+            f"UPDATE message SET {', '.join(set_parts)} WHERE rowid = ? AND IFNULL(is_from_me, 0) = 0",
             (message.rowid,),
         )
         conn.commit()

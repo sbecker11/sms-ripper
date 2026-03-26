@@ -30,9 +30,12 @@ def test_mark_inbound_read_sets_is_read(monkeypatch, tmp_path):
     db = tmp_path / "chat.db"
     conn = sqlite3.connect(db)
     conn.execute(
-        "CREATE TABLE message (is_read INTEGER DEFAULT 0, is_from_me INTEGER DEFAULT 0)"
+        "CREATE TABLE message (is_read INTEGER DEFAULT 0, is_from_me INTEGER DEFAULT 0, "
+        "date INTEGER, date_read INTEGER DEFAULT 0)"
     )
-    conn.execute("INSERT INTO message (is_read, is_from_me) VALUES (0, 0)")
+    conn.execute(
+        "INSERT INTO message (is_read, is_from_me, date, date_read) VALUES (0, 0, 12345, 0)"
+    )
     rid = conn.execute("SELECT rowid FROM message").fetchone()[0]
     conn.commit()
     conn.close()
@@ -51,7 +54,11 @@ def test_mark_inbound_read_sets_is_read(monkeypatch, tmp_path):
     assert actions.mark_inbound_read(msg) is True
     conn = sqlite3.connect(db)
     try:
-        assert conn.execute("SELECT is_read FROM message WHERE rowid=?", (rid,)).fetchone()[0] == 1
+        row = conn.execute(
+            "SELECT is_read, date_read FROM message WHERE rowid=?", (rid,)
+        ).fetchone()
+        assert row[0] == 1
+        assert row[1] == 12345
     finally:
         conn.close()
 
