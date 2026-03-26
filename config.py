@@ -61,3 +61,5 @@ CHAT_DB_PATH = settings.chat_db_path
 STOP_REPLY_TEXT = settings.stop_reply_text
 LOG_FILE = settings.log_file
 DRY_RUN = False
+# True while main.process_once runs with --quiet (redacted identifiers in action logs; minimal INFO).
+QUIET = False

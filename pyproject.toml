@@ -14,6 +14,8 @@ test-quiet = "pytest tests/ -q"
 cov = "pytest tests/ --cov=reader --cov=classifier --cov=rules --cov=actions --cov=config --cov=main --cov-report=term-missing --cov-fail-under=80"
 cov-html = "pytest tests/ --cov=reader --cov=classifier --cov=rules --cov=actions --cov=config --cov=main --cov-report=term-missing --cov-report=html --cov-fail-under=80"
 dry-run = "python main.py --dry-run"
+# ~7 days, 500 msgs — same as: poe dry-run --lookback 10080 --limit 500
+dry-run-wide = "python main.py --dry-run --lookback 10080 --limit 500"
 dry-run-spam = "python main.py --dry-run --policy spam"
 # Recent messages: tags + matched rules + planned actions + SQLite subset (read-only DB; Claude unless --no-classify)
 preview-recent = "python scripts/dry_run_recent.py"
@@ -24,7 +26,16 @@ preview-recent-spam = "python scripts/dry_run_recent.py --policy spam"
 preview-recent-spam-offline = "python scripts/dry_run_recent.py --policy spam --no-classify"
 # Extra args append to the command — do not use a bare `--` (it is passed to main.py and breaks argparse).
 run-political = "python main.py"
+# Phase 2: after STOP/block/etc., set is_read in chat.db so Dock unread may drop while Messages is open.
+run-political-mark-read = "python main.py --mark-read-phase2"
+# Bulk: mark older inbound unread read; keep K newest unread (default 10). Use Messages open; backup first: poe backup-db
+bulk-mark-read = "python scripts/bulk_mark_read.py --keep-unread 10"
 run-spam = "python main.py --policy spam"
+# Full pass helpers (same effect as chaining the listed poe tasks; uses python main.py for args).
+run-political-quiet-wide = "python main.py --quiet --lookback 10080 --limit 500"
+run-spam-quiet-wide = "python main.py --policy spam --quiet --lookback 10080 --limit 500"
+political-all = { sequence = ["backup-db", "quit-messages", "run-political-quiet-wide"] }
+spam-all = { sequence = ["backup-db", "quit-messages", "run-spam-quiet-wide"] }
 # Copy CHAT_DB_PATH (from .env) to backups/chat.db.UTC-<YYYY-MM-DDTHH-MM-SSZ>.bak
 backup-db = "python scripts/backup_chat_db.py"
 # Quit Messages (iMessage) if running — run before backup-db / archive (macOS)

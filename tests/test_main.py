@@ -33,6 +33,7 @@ def main_mod(monkeypatch: pytest.MonkeyPatch, tmp_path):
     sys.modules.pop("main", None)
     import main as m
 
+    monkeypatch.setattr(m.actions, "activate_messages", lambda: True)
     return m
 
 
@@ -186,6 +187,34 @@ def test_main_dry_run_and_process_once(main_mod, monkeypatch):
         main_mod.config.MESSAGE_FETCH_LIMIT,
         main_mod.config.LOOKBACK_MINUTES,
         "political",
+        quiet=False,
+        mark_read_phase2=False,
+    )
+
+
+def test_main_quiet_forwards_to_process_once(main_mod, monkeypatch):
+    monkeypatch.setattr(main_mod, "process_once", MagicMock())
+    monkeypatch.setattr(sys, "argv", ["main.py", "--quiet"])
+    main_mod.main()
+    main_mod.process_once.assert_called_once_with(
+        main_mod.config.MESSAGE_FETCH_LIMIT,
+        main_mod.config.LOOKBACK_MINUTES,
+        "political",
+        quiet=True,
+        mark_read_phase2=False,
+    )
+
+
+def test_main_mark_read_phase2_forwards(main_mod, monkeypatch):
+    monkeypatch.setattr(main_mod, "process_once", MagicMock())
+    monkeypatch.setattr(sys, "argv", ["main.py", "--mark-read-phase2"])
+    main_mod.main()
+    main_mod.process_once.assert_called_once_with(
+        main_mod.config.MESSAGE_FETCH_LIMIT,
+        main_mod.config.LOOKBACK_MINUTES,
+        "political",
+        quiet=False,
+        mark_read_phase2=True,
     )
 
 
@@ -197,13 +226,15 @@ def test_main_policy_spam_forwards_to_process_once(main_mod, monkeypatch):
         main_mod.config.MESSAGE_FETCH_LIMIT,
         main_mod.config.LOOKBACK_MINUTES,
         "spam",
+        quiet=False,
+        mark_read_phase2=False,
     )
 
 
 def test_main_loop_keyboard_interrupt(main_mod, monkeypatch):
     calls = {"n": 0}
 
-    def proc(limit, lookback, policy="political"):
+    def proc(limit, lookback, policy="political", **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             raise KeyboardInterrupt
@@ -219,7 +250,7 @@ def test_main_loop_sleeps_between_iterations(main_mod, monkeypatch):
     sleeps: list[int] = []
     n = {"i": 0}
 
-    def proc(limit, lookback, policy="political"):
+    def proc(limit, lookback, policy="political", **kwargs):
         n["i"] += 1
         if n["i"] == 2:
             raise KeyboardInterrupt

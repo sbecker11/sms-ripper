@@ -18,6 +18,21 @@ from reader import Message
 
 logger = logging.getLogger("sms_agent")
 
+
+def _info(msg: str) -> None:
+    if getattr(config, "QUIET", False):
+        logger.debug(msg)
+    else:
+        logger.info(msg)
+
+
+def _warning(msg: str) -> None:
+    if getattr(config, "QUIET", False):
+        logger.debug(msg)
+    else:
+        logger.warning(msg)
+
+
 # Tags that have an archive table named <TAG>_archive (extend as needed).
 ARCHIVAL_TAGS: Final[frozenset[str]] = frozenset({"POLITICAL"})
 
@@ -56,6 +71,29 @@ def _ensure_archive_table(conn: sqlite3.Connection, tag: str) -> str:
     return table
 
 
+def _register_chat_db_trigger_stubs(conn: sqlite3.Connection) -> None:
+    """
+    Messages.app registers SQLite functions used in DELETE triggers on chat.db.
+    A plain Python sqlite3 connection does not define them, so DELETE FROM message
+    can fail with "no such function: before_delete_attachment_path".
+    Stubs satisfy the trigger; behavior matches typical no-op cleanup when Messages is quit.
+    """
+    noop_names = (
+        "before_delete_attachment_path",
+        "after_delete_message",
+        "delete_attachment_path",
+    )
+
+    def _noop(*_args: object) -> None:
+        return None
+
+    for name in noop_names:
+        try:
+            conn.create_function(name, -1, _noop)
+        except (sqlite3.OperationalError, TypeError, AttributeError) as e:
+            logger.warning("[ARCHIVE] Could not register SQL stub %r: %s", name, e)
+
+
 def _delete_message_row(conn: sqlite3.Connection, rowid: int) -> None:
     """Remove a message and typical join rows (best-effort across DB versions)."""
     join_tables = (
@@ -80,11 +118,11 @@ def archive_message(message: Message) -> bool:
     """
     tag = first_archival_tag(message.attributes)
     if tag is None:
-        logger.warning("[ARCHIVE] No archival tag in attributes; skipping")
+        _warning("[ARCHIVE] No archival tag in attributes; skipping")
         return False
 
     if config.DRY_RUN:
-        logger.info(
+        _info(
             f"[DRY RUN] Would archive message rowid={message.rowid} into {archive_table_name(tag)}"
         )
         message.actions_taken.append("archive")
@@ -94,19 +132,20 @@ def archive_message(message: Message) -> bool:
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(db_path, timeout=30.0)
+        _register_chat_db_trigger_stubs(conn)
         tbl = _ensure_archive_table(conn, tag)
         qtbl = _quote_ident(tbl)
 
         if not conn.execute(
             "SELECT 1 FROM message WHERE rowid = ?", (message.rowid,)
         ).fetchone():
-            logger.warning(
+            _warning(
                 f"[ARCHIVE] No message row with rowid={message.rowid} in message table"
             )
             return False
 
         if conn.execute(f"SELECT 1 FROM {qtbl} WHERE rowid = ?", (message.rowid,)).fetchone():
-            logger.info(
+            _info(
                 f"[ARCHIVE] rowid {message.rowid} already in {tbl}; copying skipped, removing live row"
             )
         else:
@@ -116,7 +155,7 @@ def archive_message(message: Message) -> bool:
             )
         _delete_message_row(conn, message.rowid)
         conn.commit()
-        logger.info(
+        _info(
             f"[ARCHIVE] Archived rowid {message.rowid} to {tbl} and removed from message"
         )
         message.actions_taken.append("archive")

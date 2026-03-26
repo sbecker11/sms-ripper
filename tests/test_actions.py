@@ -24,6 +24,69 @@ def _sample_message() -> Message:
     )
 
 
+def test_mark_inbound_read_sets_is_read(monkeypatch, tmp_path):
+    import sqlite3
+
+    db = tmp_path / "chat.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE message (is_read INTEGER DEFAULT 0, is_from_me INTEGER DEFAULT 0)"
+    )
+    conn.execute("INSERT INTO message (is_read, is_from_me) VALUES (0, 0)")
+    rid = conn.execute("SELECT rowid FROM message").fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(config, "CHAT_DB_PATH", str(db))
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    msg = Message(
+        rowid=rid,
+        chat_id=1,
+        chat_identifier="+1",
+        sender="+1",
+        text="x",
+        is_from_me=False,
+        date=None,
+    )
+    assert actions.mark_inbound_read(msg) is True
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("SELECT is_read FROM message WHERE rowid=?", (rid,)).fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_mark_inbound_read_skips_outbound(monkeypatch, tmp_path):
+    import sqlite3
+
+    db = tmp_path / "chat.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE message (is_read INTEGER DEFAULT 0, is_from_me INTEGER DEFAULT 0)"
+    )
+    conn.execute("INSERT INTO message VALUES (0, 1)")
+    rid = conn.execute("SELECT rowid FROM message").fetchone()[0]
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(config, "CHAT_DB_PATH", str(db))
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    msg = Message(
+        rowid=rid,
+        chat_id=1,
+        chat_identifier="+1",
+        sender="+1",
+        text="x",
+        is_from_me=True,
+        date=None,
+    )
+    assert actions.mark_inbound_read(msg) is True
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("SELECT is_read FROM message WHERE rowid=?", (rid,)).fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
 def test_load_blocklist_missing_returns_empty(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert actions.load_blocklist() == set()
@@ -176,6 +239,7 @@ def test_messages_quit_guard_interactive_succeeds_after_quit(monkeypatch):
 
 
 def test_send_stop_uses_fallback_script(monkeypatch):
+    """SMS attempt fails, next channel (iMessage) succeeds."""
     monkeypatch.setattr(config, "DRY_RUN", False)
     monkeypatch.setattr(actions, "_is_messages_running", lambda: False)
     calls: list[str] = []
@@ -194,8 +258,15 @@ def test_send_stop_uses_fallback_script(monkeypatch):
 def test_send_stop_both_fail(monkeypatch):
     monkeypatch.setattr(config, "DRY_RUN", False)
     monkeypatch.setattr(actions, "_is_messages_running", lambda: False)
-    monkeypatch.setattr(actions, "_run_applescript", lambda s: (False, "no"))
+    calls = {"n": 0}
+
+    def fail(_script: str):
+        calls["n"] += 1
+        return False, "no"
+
+    monkeypatch.setattr(actions, "_run_applescript", fail)
     assert actions.send_stop(_sample_message()) is False
+    assert calls["n"] == 3
 
 
 def test_delete_thread_failure_logs(monkeypatch):
@@ -243,12 +314,66 @@ def test_action_list_needs_sqlite_archive():
     assert actions.action_list_needs_sqlite_archive(["send_stop", "delete"]) is False
 
 
+def test_action_list_needs_messages_activate():
+    assert actions.action_list_needs_messages_activate(["send_stop"]) is True
+    assert actions.action_list_needs_messages_activate(["delete"]) is True
+    assert actions.action_list_needs_messages_activate(["block", "log_only"]) is False
+
+
+def test_activate_messages_dry_run_no_subprocess(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "DRY_RUN", True)
+    with patch.object(actions.subprocess, "run") as run:
+        assert actions.activate_messages() is True
+    run.assert_not_called()
+
+
 def test_execution_action_order_archive_before_delete():
     assert actions._execution_action_order(["delete", "send_stop", "archive"]) == [
         "archive",
         "send_stop",
         "delete",
     ]
+
+
+def test_execute_actions_archive_only_skips_ui(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "DRY_RUN", True)
+    ran: list[str] = []
+
+    monkeypatch.setitem(
+        actions.ACTION_MAP,
+        "archive",
+        lambda m: ran.append("archive") or True,
+    )
+    monkeypatch.setitem(
+        actions.ACTION_MAP,
+        "send_stop",
+        lambda m: ran.append("send_stop") or True,
+    )
+    msg = _sample_message()
+    actions.execute_actions(msg, ["archive", "send_stop"], phases="archive_only")
+    assert ran == ["archive"]
+
+
+def test_execute_actions_ui_only_skips_archive(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "DRY_RUN", True)
+    ran: list[str] = []
+
+    monkeypatch.setitem(
+        actions.ACTION_MAP,
+        "archive",
+        lambda m: ran.append("archive") or True,
+    )
+    monkeypatch.setitem(
+        actions.ACTION_MAP,
+        "send_stop",
+        lambda m: ran.append("send_stop") or True,
+    )
+    msg = _sample_message()
+    actions.execute_actions(msg, ["archive", "send_stop"], phases="ui_only")
+    assert ran == ["send_stop"]
 
 
 def test_execute_actions_runs_archive_before_delete(monkeypatch, tmp_path):

@@ -22,6 +22,21 @@ def test_archive_table_name():
     assert archive.archive_table_name("POLITICAL") == "POLITICAL_archive"
 
 
+def test_register_chat_db_trigger_stubs_no_crash():
+    conn = sqlite3.connect(":memory:")
+    try:
+        archive._register_chat_db_trigger_stubs(conn)
+        conn.execute("CREATE TABLE t (x)")
+        conn.execute(
+            "CREATE TRIGGER tr BEFORE DELETE ON t BEGIN "
+            "SELECT before_delete_attachment_path(1); END"
+        )
+        conn.execute("INSERT INTO t VALUES (1)")
+        conn.execute("DELETE FROM t WHERE x = 1")
+    finally:
+        conn.close()
+
+
 def test_archive_message_dry_run(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(config, "DRY_RUN", True)
     msg = Message(

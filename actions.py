@@ -4,15 +4,28 @@ AppleScript-backed actions for the SMS agent.
 Each function returns True on success, False on failure.
 """
 
+from __future__ import annotations
+
 import logging
+import sqlite3
 import subprocess
 import sys
+from typing import Literal
 
 import archive
 import config
 from reader import Message
 
 logger = logging.getLogger("sms_agent")
+
+
+def _info(msg: str) -> None:
+    """Per-message detail: DEBUG when QUIET so INFO stays minimal progress-only."""
+    if getattr(config, "QUIET", False):
+        logger.debug(msg)
+    else:
+        logger.info(msg)
+
 
 MESSAGES_QUIT_PROMPT = (
     "This operation writes directly to the Messages SQLite database (archive). "
@@ -28,7 +41,10 @@ DIRECT_SQLITE_ARCHIVE_ACTIONS: frozenset[str] = frozenset({"archive"})
 def _run_applescript(script: str) -> tuple[bool, str]:
     """Execute an AppleScript string. Returns (success, output/error)."""
     if config.DRY_RUN:
-        logger.info(f"[DRY RUN] AppleScript:\n{script}")
+        if getattr(config, "QUIET", False):
+            logger.debug("[DRY RUN] AppleScript (%d chars); full script at DEBUG", len(script))
+        else:
+            logger.info(f"[DRY RUN] AppleScript:\n{script}")
         return True, "dry_run"
     try:
         result = subprocess.run(
@@ -70,6 +86,23 @@ def messages_quit_guard() -> bool:
     return _messages_quit_guard()
 
 
+def activate_messages() -> bool:
+    """
+    Bring Messages to the foreground before phase-2 AppleScript (STOP, delete, etc.).
+    Phase 1 should finish all chat.db archives while Messages was quit; this explicitly
+    starts the UI phase. Dry-run: log only, no osascript.
+    """
+    if config.DRY_RUN:
+        _info("[DRY RUN] Would activate Messages before queued STOP / UI actions")
+        return True
+    ok, err = _run_applescript('tell application "Messages" to activate')
+    if ok:
+        logger.info("[MESSAGES] Activated for phase 2 (queued STOP replies and other UI actions)")
+    else:
+        logger.error(f"[MESSAGES] activate failed: {err}")
+    return ok
+
+
 def _messages_quit_guard() -> bool:
     """
     Before WRITE/DELETE side effects on the Messages database, ensure Messages is not running.
@@ -99,32 +132,73 @@ def _messages_quit_guard() -> bool:
     return False
 
 
+def _applescript_escape(text: str) -> str:
+    """Escape for double-quoted AppleScript string literals."""
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def send_stop(message: Message) -> bool:
-    """Send a STOP reply to the message sender."""
-    target = message.sender or message.chat_identifier
-    reply_text = config.STOP_REPLY_TEXT
+    """
+    Send a STOP reply to the message sender.
 
-    # Try iMessage first, fall back to SMS
-    script = f"""
-tell application "Messages"
-    set targetBuddy to a reference to buddy "{target}" of (first service whose service type = iMessage)
-    send "{reply_text}" to targetBuddy
-end tell
-"""
-    success, output = _run_applescript(script)
-    if not success:
-        # Fallback: use chat identifier directly
-        script_fallback = f"""
-tell application "Messages"
-    send "{reply_text}" to participant "{target}" of chat "{message.chat_identifier}"
-end tell
-"""
-        success, output = _run_applescript(script_fallback)
+    Tries SMS first (many political blasts are SMS; iMessage-first often shows “Not Delivered”),
+    then iMessage, then sending to the existing chat by identifier.
+    """
+    target = _applescript_escape(message.sender or message.chat_identifier)
+    chat_id = _applescript_escape(message.chat_identifier)
+    reply_text = _applescript_escape(config.STOP_REPLY_TEXT)
 
-    if success:
-        logger.info(f"[SEND_STOP] Sent '{reply_text}' to {target}")
-        message.actions_taken.append("send_stop")
-    return success
+    scripts = [
+        (
+            "sms",
+            f"""
+tell application "Messages"
+    set smsSvc to first service whose service type is SMS
+    send "{reply_text}" to buddy "{target}" of smsSvc
+end tell
+""",
+        ),
+        (
+            "imessage",
+            f"""
+tell application "Messages"
+    set imSvc to first service whose service type is iMessage
+    send "{reply_text}" to buddy "{target}" of imSvc
+end tell
+""",
+        ),
+        (
+            "chat",
+            f"""
+tell application "Messages"
+    send "{reply_text}" to participant "{target}" of chat "{chat_id}"
+end tell
+""",
+        ),
+    ]
+    last_err = ""
+    for label, script in scripts:
+        success, output = _run_applescript(script)
+        if success:
+            who = (
+                f"rowid={message.rowid} (recipient omitted)"
+                if getattr(config, "QUIET", False)
+                else (message.sender or message.chat_identifier)
+            )
+            _info(
+                f"[SEND_STOP] Sent '{config.STOP_REPLY_TEXT}' to {who} (via {label})"
+            )
+            message.actions_taken.append("send_stop")
+            return True
+        last_err = output
+
+    who_fail = (
+        f"rowid={message.rowid}"
+        if getattr(config, "QUIET", False)
+        else target
+    )
+    logger.error(f"[SEND_STOP] All attempts failed for {who_fail}: {last_err}")
+    return False
 
 
 def block_sender(message: Message) -> bool:
@@ -156,10 +230,19 @@ do shell script "echo 'Blocking {target}'"
     # A robust alternative: write to a local blocklist file and check it
     # at the top of main.py on each run to skip already-blocked senders.
 
-    logger.warning(
-        f"[BLOCK] Full programmatic blocking requires Accessibility permissions. "
-        f"Logged {target} to local blocklist. Open Messages → Details → Block Contact to complete."
+    logged = (
+        f"sender for rowid={message.rowid}"
+        if getattr(config, "QUIET", False)
+        else target
     )
+    block_msg = (
+        f"[BLOCK] Full programmatic blocking requires Accessibility permissions. "
+        f"Logged {logged} to local blocklist. Open Messages → Details → Block Contact to complete."
+    )
+    if getattr(config, "QUIET", False):
+        logger.debug(block_msg)
+    else:
+        logger.warning(block_msg)
     _write_local_blocklist(target)
     message.actions_taken.append("block")
     return True
@@ -178,19 +261,78 @@ tell application "Messages"
 end tell
 """
     success, output = _run_applescript(script)
+    who = (
+        f"rowid={message.rowid} (chat id omitted)"
+        if getattr(config, "QUIET", False)
+        else identifier
+    )
     if success:
-        logger.info(f"[DELETE] Deleted thread for {identifier}")
+        _info(f"[DELETE] Deleted thread for {who}")
         message.actions_taken.append("delete")
     else:
-        logger.error(f"[DELETE] Failed to delete thread for {identifier}: {output}")
+        logger.error(f"[DELETE] Failed to delete thread for {who}: {output}")
     return success
 
 
 def log_only(message: Message) -> bool:
     """No action — just log."""
-    logger.info(f"[LOG_ONLY] {message.display()}")
+    if getattr(config, "QUIET", False):
+        logger.debug(
+            "[LOG_ONLY] rowid=%s chat_id=%s", message.rowid, message.chat_id
+        )
+    else:
+        logger.info(f"[LOG_ONLY] {message.display()}")
     message.actions_taken.append("log_only")
     return True
+
+
+def mark_inbound_read(message: Message) -> bool:
+    """
+    Set the message row's read flag in chat.db (typically is_read=1).
+
+    Intended for phase 2 while Messages is open so the Dock unread count can drop as rows
+    are processed. May still be ignored or delayed depending on macOS version.
+    Outbound rows are skipped.
+    """
+    if config.DRY_RUN:
+        who = message.rowid if not getattr(config, "QUIET", False) else "…"
+        _info(f"[DRY RUN] Would mark inbound message read rowid={who}")
+        return True
+    if message.is_from_me:
+        return True
+
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(config.CHAT_DB_PATH, timeout=15.0)
+        archive._register_chat_db_trigger_stubs(conn)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(message)").fetchall()}
+        read_col = None
+        if "is_read" in cols:
+            read_col = "is_read"
+        elif "read" in cols:
+            read_col = "read"
+        if read_col is None:
+            logger.warning("[MARK_READ] message table has no is_read/read column; skipping")
+            return False
+
+        qcol = '"' + read_col.replace('"', '""') + '"'
+        cur = conn.execute(
+            f"UPDATE message SET {qcol} = 1 WHERE rowid = ? AND IFNULL(is_from_me, 0) = 0",
+            (message.rowid,),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            logger.debug("[MARK_READ] No row updated for rowid=%s", message.rowid)
+            return False
+        who = message.rowid if not getattr(config, "QUIET", False) else "…"
+        _info(f"[MARK_READ] Marked inbound message read (rowid={who})")
+        return True
+    except sqlite3.Error as e:
+        logger.warning("[MARK_READ] Failed: %s", e)
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def archive_message(message: Message) -> bool:
@@ -238,11 +380,22 @@ def action_list_needs_sqlite_archive(actions: list[str]) -> bool:
     return any(a in DIRECT_SQLITE_ARCHIVE_ACTIONS for a in _execution_action_order(actions))
 
 
+def action_list_needs_messages_activate(actions: list[str]) -> bool:
+    """True if UI phase uses AppleScript that expects Messages running (STOP, delete)."""
+    return any(
+        a in ("send_stop", "delete") for a in _execution_action_order(actions)
+    )
+
+
+Phases = Literal["all", "archive_only", "ui_only"]
+
+
 def execute_actions(
     message: Message,
     actions: list[str],
     *,
     batch_sqlite_ok: bool | None = None,
+    phases: Phases = "all",
 ) -> dict[str, bool]:
     """
     Run all actions for a message. Returns {action: success} map.
@@ -251,13 +404,21 @@ def execute_actions(
       None — single-message mode: prompt for Messages quit before archive if needed.
       True — caller already ensured quit for this run (e.g. main.py batched guard).
       False — skip archive actions (guard failed or declined).
+
+    phases:
+      all — archive (sqlite) then UI actions in one call.
+      archive_only — only direct chat.db archive; use when Messages must stay quit.
+      ui_only — only AppleScript actions (send_stop, block, delete, log_only); run after archives.
     """
     ordered = _execution_action_order(actions)
     sqlite_actions = [a for a in ordered if a in DIRECT_SQLITE_ARCHIVE_ACTIONS]
     ui_actions = [a for a in ordered if a not in DIRECT_SQLITE_ARCHIVE_ACTIONS]
     results: dict[str, bool] = {}
 
-    if not config.DRY_RUN and sqlite_actions:
+    run_archive = phases in ("all", "archive_only")
+    run_ui = phases in ("all", "ui_only")
+
+    if run_archive and not config.DRY_RUN and sqlite_actions:
         if batch_sqlite_ok is None:
             if not _messages_quit_guard():
                 for a in sqlite_actions:
@@ -268,20 +429,22 @@ def execute_actions(
                 results[a] = False
             sqlite_actions = []
 
-    for action in sqlite_actions:
-        fn = ACTION_MAP.get(action)
-        if not fn:
-            logger.warning(f"Unknown action: {action}")
-            results[action] = False
-            continue
-        results[action] = fn(message)
+    if run_archive:
+        for action in sqlite_actions:
+            fn = ACTION_MAP.get(action)
+            if not fn:
+                logger.warning(f"Unknown action: {action}")
+                results[action] = False
+                continue
+            results[action] = fn(message)
 
-    for action in ui_actions:
-        fn = ACTION_MAP.get(action)
-        if not fn:
-            logger.warning(f"Unknown action: {action}")
-            results[action] = False
-            continue
-        results[action] = fn(message)
+    if run_ui:
+        for action in ui_actions:
+            fn = ACTION_MAP.get(action)
+            if not fn:
+                logger.warning(f"Unknown action: {action}")
+                results[action] = False
+                continue
+            results[action] = fn(message)
 
     return results
