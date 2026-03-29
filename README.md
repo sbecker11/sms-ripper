@@ -74,20 +74,23 @@ If you care about **pulling campaign / PAC SMS out of the live thread**, treat *
 
 ## Background daemon (launchd)
 
-To run the same work as **`poe political-all`** plus **badge cleanup** on a timer **after login**, without a terminal:
+Scheduled runs (default every **15 minutes** after login) perform the same *kind* of work as **`poe political-all`** plus **badge cleanup**. **Full setup** — Full Disk Access paths, **start / one cycle / stop**, and **log files** — is documented here:
 
-1. **Full Disk Access**: run **`poe fda-assist`** (step-by-step clipboard) or **`poe daemon-fda-path`**. Add **`/bin/cp`** first: backup falls back to `/bin/cp -p` when Python cannot read `chat.db`, and that path never moves when Homebrew upgrades Python. You still need **Python.app + `bin/python3.11`** (and often **`/usr/bin/sqlite3`**) so **`main.py`** can read the database. **Automation → Messages** is still needed for quit / Dock scripts. **Check access:** **`poe verify-fda`** (tries real reads of `chat.db` — Apple does not expose a reliable API to list TCC grants).
-2. Install (default **900 seconds = 15 minutes**): `poe daemon-install-15m`  
-   Or: `bash scripts/install_sms_ripper_launchagent.sh install 900`  
-   Custom interval (seconds, minimum 60): `bash scripts/install_sms_ripper_launchagent.sh install 1800`
-3. **Log file (all subprocess output):** `logs/daemon.log`  
-   On failure, a **macOS alert** names the failed step and points at that log plus common fixes.
+**[docs/DAEMON.md](docs/DAEMON.md)**
 
-**Tradeoff:** each cycle **quits Messages** (like `political-all`), runs the wide political pass (Claude API), then `bulk_mark_read` + Dock/Notification Center refresh. If that is too disruptive, use a longer interval or `poe daemon-uninstall`.
+Quick reference:
 
-- **Status / last log lines:** `poe daemon-status`
-- **Single manual cycle (foreground):** `poe daemon-cycle-once`
-- **Remove agent:** `poe daemon-uninstall`
+| Task | Command |
+|------|---------|
+| Guided Full Disk Access (clipboard walkthrough) | `poe fda-assist` |
+| Print FDA paths to add | `poe daemon-fda-path` |
+| Verify `chat.db` access (Python, `/bin/cp`, `sqlite3`) | `poe verify-fda` |
+| Install / enable (15 min) | `poe daemon-install-15m` |
+| Run **one** cycle now (foreground) | `poe daemon-cycle-once` |
+| Stop / remove LaunchAgent | `poe daemon-uninstall` |
+| Loaded? + tail of log | `poe daemon-status` |
+
+**Logs:** **`logs/daemon.log`** (cycle steps); **`sms_agent.log`** (`main.py` logging during the cycle). Details: [docs/DAEMON.md](docs/DAEMON.md) (section *Log files*).
 
 ## How It Works
 
@@ -139,3 +142,5 @@ The **political** policy does not block or maintain `blocked_senders.txt`. If yo
 | `sms_agent.log` | Run log (auto-created) |
 | `scripts/dry_run_recent.py` | Preview tags + rules + execution-ordered actions (read-only DB) |
 | `scripts/backup_chat_db.py` | Timestamped backup under `backups/` |
+| `docs/DAEMON.md` | LaunchAgent: FDA, start/stop, logs, troubleshooting |
+| `logs/daemon.log` | Daemon cycle stdout/stderr (gitignored if `*.log`) |

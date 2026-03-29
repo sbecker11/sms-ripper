@@ -84,6 +84,12 @@ Without this, you may see errors such as “chat.db not found” or permission f
 
 Example **read-only SQL** against `chat.db` (counts, recent messages, search): [QUERIES.md](QUERIES.md).
 
+#### Full Disk Access — `launchd` background daemon
+
+If you use the **LaunchAgent** (`poe daemon-install-15m`), macOS runs **`venv/bin/python`**, not your terminal app. You must add the **framework Python** paths, **`/bin/cp`**, **`/usr/bin/sqlite3`**, and related entries — not only Terminal/Cursor. Guided setup: **`poe fda-assist`**. Check access: **`poe verify-fda`**.
+
+Full list of paths, install/stop commands, and log file locations: **[DAEMON.md](DAEMON.md)**.
+
 ### Messages and automation
 
 `actions.py` runs **AppleScript** (`osascript`) to send replies and delete threads. You may be prompted to allow **Automation** (e.g. Terminal or **Cursor** controlling **Messages**). Approve those prompts for the app you use to run `python main.py` or **`poe quit-messages`**. If AppleScript “does nothing,” check **System Settings → Privacy & Security → Automation** for your terminal/IDE.
@@ -140,6 +146,8 @@ python main.py --lookback 360 --limit 200
 ## 8. Optional: verify database access
 
 If setup is correct and Full Disk Access is granted, Python should be able to open the DB read-only. If `main.py` or tests that use a real path fail, re-check Full Disk Access for the exact binary launching Python (terminal app, IDE, or `python` from the venv).
+
+For the **daemon**, run **`poe verify-fda`** from the project root (uses `venv/bin/python`). That probes **`chat.db`** reads the same way **`backup_chat_db.py`** and **`main.py`** do. See [DAEMON.md](DAEMON.md).
 
 ## 9. Optional: tab completion for `poe`
 
