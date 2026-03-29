@@ -89,8 +89,12 @@ Quick reference:
 | Run **one** cycle now (foreground) | `poe daemon-cycle-once` |
 | Stop / remove LaunchAgent | `poe daemon-uninstall` |
 | Loaded? + tail of log | `poe daemon-status` |
+| Regenerate static report (`reports/index.html`) | `poe report-generate` |
+| Open report in browser (macOS) | `poe report-open` |
 
 **Logs:** **`logs/daemon.log`** (cycle steps); **`sms_agent.log`** (`main.py` logging during the cycle). Details: [docs/DAEMON.md](docs/DAEMON.md) (section *Log files*).
+
+**Static report:** each daemon cycle regenerates **`reports/index.html`** (political archive table). **`poe report-generate`** to run manually; **`poe report-open`** to open in the default browser (macOS). See [docs/DAEMON.md](docs/DAEMON.md) (section *Static HTML report*).
 
 ## How It Works
 
@@ -142,5 +146,6 @@ The **political** policy does not block or maintain `blocked_senders.txt`. If yo
 | `sms_agent.log` | Run log (auto-created) |
 | `scripts/dry_run_recent.py` | Preview tags + rules + execution-ordered actions (read-only DB) |
 | `scripts/backup_chat_db.py` | Timestamped backup under `backups/` |
-| `docs/DAEMON.md` | LaunchAgent: FDA, start/stop, logs, troubleshooting |
+| `docs/DAEMON.md` | LaunchAgent: FDA, start/stop, logs, HTML report, troubleshooting |
+| `reports/index.html` | Generated political-archive report (gitignored; created by daemon or `poe report-generate`) |
 | `logs/daemon.log` | Daemon cycle stdout/stderr (gitignored if `*.log`) |

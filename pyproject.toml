@@ -65,6 +65,9 @@ daemon-fda-path = "python scripts/print_fda_python.py"
 fda-assist = "python scripts/fda_assist.py"
 # Probe chat.db reads (Python, /bin/cp, sqlite3) — ground truth for Full Disk Access; not a TCC DB reader.
 verify-fda = "python scripts/verify_fda.py"
+# Static HTML report of POLITICAL_archive (daemon runs this at end of each cycle)
+report-generate = "python scripts/generate_report_html.py"
+report-open = "open reports/index.html"
 # chat.db read-only reports (macOS + Full Disk Access; see docs/QUERIES.md)
 query-total = "bash scripts/run_chat_query.sh queries/total_messages.sql"
 query-text = "bash scripts/run_chat_query.sh queries/text_messages_no_tapback.sql"

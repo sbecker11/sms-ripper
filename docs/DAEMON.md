@@ -7,6 +7,7 @@ The **LaunchAgent** `com.smsripper.periodic` runs [`scripts/daemon_cycle.py`](..
 3. **`main.py --quiet --lookback 10080 --limit 500`** — political policy, wide window
 4. **`bulk_mark_read.py --keep-unread 0 --fix-joined-outbound-read`**
 5. **`fix_messages_badge_stuck.sh`** — restart Notification Center / Dock so badges refresh
+6. **`generate_report_html.py`** — writes **`reports/index.html`** (static political-archive report). Failures are logged but do **not** fail the whole cycle.
 
 **Tradeoff:** Messages is quit every cycle that reaches step 2; the main step uses the **Claude API** (cost). Use a longer interval or uninstall if that is too disruptive.
 
@@ -89,7 +90,22 @@ All commands are run from the **repository root** (same directory as `pyproject.
 
 ---
 
-## 3. Log files
+## 3. Static HTML report (`reports/index.html`)
+
+Each successful daemon cycle (step 6) regenerates a **self-contained** HTML file you can open in a browser.
+
+| What | Detail |
+|------|--------|
+| **Path** | **`reports/index.html`** (under the repo root; `reports/*.html` is gitignored) |
+| **Refresh** | The page includes a **meta refresh** every **900 seconds** while the tab stays open, so the browser reloads the file from disk after the next daemon run overwrites it |
+| **Open / bookmark** | **`file://`** path to **`reports/index.html`**, or **`poe report-open`** (macOS) after **`poe report-generate`**. Self-contained HTML; **no web server**. |
+| **Manual** | **`poe report-generate`** anytime (same script the daemon runs) |
+
+The report lists **`POLITICAL_archive`** rows (newest first). It does **not** replace Messages; it is read-only.
+
+---
+
+## 4. Log files
 
 | Log | Location | What it contains |
 |-----|----------|------------------|
@@ -103,7 +119,7 @@ All commands are run from the **repository root** (same directory as `pyproject.
 
 ---
 
-## 4. Quick troubleshooting
+## 5. Quick troubleshooting
 
 | Symptom | What to try |
 |---------|-------------|

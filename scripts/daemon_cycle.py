@@ -151,11 +151,21 @@ def main() -> int:
                     "fix_badge_shell",
                     ["/bin/bash", str(_REPO / "scripts" / "fix_messages_badge_stuck.sh")],
                 ),
+                (
+                    "report_html",
+                    [str(vpy), str(_REPO / "scripts" / "generate_report_html.py")],
+                ),
             ]
 
             for step, cmd in steps:
                 code = _run_step(cmd, step, logf, env)
                 if code != 0:
+                    if step == "report_html":
+                        _log_line(
+                            "WARN report_html failed (non-fatal); see stderr in log above",
+                            logf,
+                        )
+                        continue
                     extra = _BACKUP_FAIL_HINT if step == "backup" else ""
                     detail = (
                         f"Command exited with code {code}. See the log for output."
