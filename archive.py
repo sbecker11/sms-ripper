@@ -81,6 +81,7 @@ def _register_chat_db_trigger_stubs(conn: sqlite3.Connection) -> None:
     noop_names = (
         "before_delete_attachment_path",
         "after_delete_message",
+        "after_delete_message_plugin",
         "delete_attachment_path",
     )
 
@@ -92,6 +93,44 @@ def _register_chat_db_trigger_stubs(conn: sqlite3.Connection) -> None:
             conn.create_function(name, -1, _noop)
         except (sqlite3.OperationalError, TypeError, AttributeError) as e:
             logger.warning("[ARCHIVE] Could not register SQL stub %r: %s", name, e)
+
+
+def purge_live_message(message: Message) -> bool:
+    """
+    Remove the message row from chat.db (and typical join rows) without copying to any *_archive table.
+    Use for unsubscribe confirmations and similar junk you do not want preserved.
+    """
+    if config.DRY_RUN:
+        _info(f"[DRY RUN] Would purge (delete) message rowid={message.rowid} from message (no archive)")
+        message.actions_taken.append("purge")
+        return True
+
+    db_path = config.CHAT_DB_PATH
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        _register_chat_db_trigger_stubs(conn)
+        if not conn.execute(
+            "SELECT 1 FROM message WHERE rowid = ?", (message.rowid,)
+        ).fetchone():
+            _warning(f"[PURGE] No message row with rowid={message.rowid} in message table")
+            return False
+        _delete_message_row(conn, message.rowid)
+        conn.commit()
+        _info(f"[PURGE] Removed rowid {message.rowid} from message (not archived)")
+        message.actions_taken.append("purge")
+        return True
+    except sqlite3.Error as e:
+        logger.error(f"[PURGE] Failed: {e}")
+        if conn is not None:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _delete_message_row(conn: sqlite3.Connection, rowid: int) -> None:

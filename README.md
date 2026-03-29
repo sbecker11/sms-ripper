@@ -2,7 +2,7 @@
 
 An AI-powered iMessage agent that reads recent messages, classifies them using Claude,
 applies configurable rules, and takes action. By default, **only messages tagged POLITICAL**
-(non-personal) are actioned (**archive**, **STOP**, **blocklist**); other tags (e.g. SPAM alone)
+(non-personal) are actioned (**archive** only — copied to `POLITICAL_archive` and removed from the live `message` table so they disappear from Messages); other tags (e.g. SPAM alone)
 typically **log only** unless you add more rules in `rules.py`.
 
 ## Setup
@@ -25,6 +25,8 @@ In **System Settings → Privacy & Security → Full Disk Access**:
 
 In **System Settings → Privacy & Security → Accessibility**:
 - Add your terminal app (required for AppleScript UI automation)
+
+**Optional — ghost unread rows:** If the sidebar shows unread threads that say **“No Conversation Selected”** until you click twice, you can try the experimental UI scrub (requires Accessibility): `poe messages-scrub-ui -- --rows 30` (see `scripts/messages_scrub_sidebar.py --help`). This is **fragile** across macOS versions; database cleanup (`political-all`, `bulk_mark_read`) remains the reliable approach.
 
 ## Usage
 
@@ -53,6 +55,40 @@ poe backup-db
 
 Other **`poe`** tasks (queries, repo path): [docs/QUERIES.md](docs/QUERIES.md) and [docs/TESTING.md](docs/TESTING.md).
 
+## Focus: archiving political texts
+
+If you care about **pulling campaign / PAC SMS out of the live thread**, treat **archive-only political** as the core product. The main pipeline **does not** send STOP, **does not** use `blocked_senders.txt` to skip senders, and **does not** append to the blocklist. **Dock badge tooling** (`scripts/bulk_mark_read.py`, `poe badge-diagnose`, `--mark-read-phase2`) is optional and separate.
+
+**Recommended loop**
+
+1. **Preview** (no writes): `poe dry-run` or `poe dry-run-wide` (wider window / more rows).
+2. **Live run** (writes `chat.db`; **Messages must be quit**): `poe political-all` — backs up DB, quits Messages, then runs the agent with a wide lookback.
+3. **Where it goes**: qualifying rows are copied into the **`POLITICAL_archive`** table (same columns as `message`), then removed from **`message`** (see `archive.py`).
+
+**What gets archived**
+
+- Classifier must produce **`POLITICAL`** and not **`PERSONAL`** (`rules.py` → `political` rule).
+- Matched action is **`archive`** only (no STOP, no blocklist).
+
+**Inspect without acting**: `poe preview-recent` / `poe preview-recent-compact` (see [docs/QUERIES.md](docs/QUERIES.md)).
+
+## Background daemon (launchd)
+
+To run the same work as **`poe political-all`** plus **badge cleanup** on a timer **after login**, without a terminal:
+
+1. **Full Disk Access**: run **`poe fda-assist`** (step-by-step clipboard) or **`poe daemon-fda-path`**. Add **`/bin/cp`** first: backup falls back to `/bin/cp -p` when Python cannot read `chat.db`, and that path never moves when Homebrew upgrades Python. You still need **Python.app + `bin/python3.11`** (and often **`/usr/bin/sqlite3`**) so **`main.py`** can read the database. **Automation → Messages** is still needed for quit / Dock scripts. **Check access:** **`poe verify-fda`** (tries real reads of `chat.db` — Apple does not expose a reliable API to list TCC grants).
+2. Install (default **900 seconds = 15 minutes**): `poe daemon-install-15m`  
+   Or: `bash scripts/install_sms_ripper_launchagent.sh install 900`  
+   Custom interval (seconds, minimum 60): `bash scripts/install_sms_ripper_launchagent.sh install 1800`
+3. **Log file (all subprocess output):** `logs/daemon.log`  
+   On failure, a **macOS alert** names the failed step and points at that log plus common fixes.
+
+**Tradeoff:** each cycle **quits Messages** (like `political-all`), runs the wide political pass (Claude API), then `bulk_mark_read` + Dock/Notification Center refresh. If that is too disruptive, use a longer interval or `poe daemon-uninstall`.
+
+- **Status / last log lines:** `poe daemon-status`
+- **Single manual cycle (foreground):** `poe daemon-cycle-once`
+- **Remove agent:** `poe daemon-uninstall`
+
 ## How It Works
 
 ```
@@ -71,13 +107,13 @@ Edit `rules.py` to add or modify rules. Each rule has:
 - `condition`: a lambda that takes the attributes list and returns True/False
 - `actions`: list of `send_stop`, `block`, `delete`, `archive`, `log_only`
 
-Example — archive political messages, send STOP, then record blocklist entry (quit Messages before runs that touch `chat.db`; see `actions.py` for the quit guard):
+Example — archive political messages only (quit Messages before runs that touch `chat.db`; see `actions.py` for the quit guard):
 
 ```python
 Rule(
     name="political",
     condition=lambda attrs: "POLITICAL" in attrs and "PERSONAL" not in attrs,
-    actions=["archive", "send_stop", "block"],
+    actions=["archive"],
 )
 ```
 
@@ -85,10 +121,7 @@ Rule(
 
 ## Notes on Blocking
 
-Full programmatic blocking (equivalent to Messages → Details → Block Contact) requires
-either Accessibility API access or a native Swift/Obj-C bridge. As a pragmatic fallback,
-the agent writes blocked senders to `blocked_senders.txt` and skips them on future runs.
-To fully block: open Messages, find the thread before deletion, tap Details → Block Contact.
+The **political** policy does not block or maintain `blocked_senders.txt`. If you run **`main.py --policy spam`**, the spam rules may still call **`block`** (append to `blocked_senders.txt`); that file is **not** read by `main.py` anymore, so it does not affect who gets classified or archived.
 
 ## Files
 
@@ -101,7 +134,7 @@ To fully block: open Messages, find the thread before deletion, tap Details → 
 | `archive.py` | Copy rows to `<TAG>_archive`, delete live `message` row |
 | `actions.py` | AppleScript send/block/delete; dispatches `archive` |
 | `config.py` | Configuration |
-| `blocked_senders.txt` | Local blocklist (auto-created) |
+| `blocked_senders.txt` | Legacy / spam-policy block append target (optional; not used to skip senders in `main.py`) |
 | `backups/` | `chat.db` copies from `poe backup-db` (gitignored) |
 | `sms_agent.log` | Run log (auto-created) |
 | `scripts/dry_run_recent.py` | Preview tags + rules + execution-ordered actions (read-only DB) |

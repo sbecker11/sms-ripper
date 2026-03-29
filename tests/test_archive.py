@@ -31,6 +31,10 @@ def test_register_chat_db_trigger_stubs_no_crash():
             "CREATE TRIGGER tr BEFORE DELETE ON t BEGIN "
             "SELECT before_delete_attachment_path(1); END"
         )
+        conn.execute(
+            "CREATE TRIGGER tr2 AFTER DELETE ON t BEGIN "
+            "SELECT after_delete_message_plugin(1); END"
+        )
         conn.execute("INSERT INTO t VALUES (1)")
         conn.execute("DELETE FROM t WHERE x = 1")
     finally:
@@ -101,6 +105,44 @@ def test_archive_message_moves_row(monkeypatch: pytest.MonkeyPatch, chat_db_path
                 0
             ]
             == "political text"
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM chat_message_join WHERE message_id = ?", (mid,)
+            ).fetchone()[0]
+            == 0
+        )
+    finally:
+        conn.close()
+
+
+def test_purge_live_message_removes_row_without_archive(
+    monkeypatch: pytest.MonkeyPatch, chat_db_path: Path
+):
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    ns = 1_700_000_000_000_000_001
+    mid = populate_chat_db(chat_db_path, date_ns=ns, text="You have unsubscribed.")
+
+    msg = Message(
+        rowid=mid,
+        chat_id=1,
+        chat_identifier="+15551234567",
+        sender="+15551234567",
+        text="You have unsubscribed.",
+        is_from_me=False,
+        date=None,
+        attributes=["LEGIT"],
+    )
+    assert archive.purge_live_message(msg) is True
+
+    conn = sqlite3.connect(chat_db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM message WHERE rowid = ?", (mid,)).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='POLITICAL_archive'"
+            ).fetchone()[0]
+            == 0
         )
         assert (
             conn.execute(

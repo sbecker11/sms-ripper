@@ -79,6 +79,25 @@ def test_get_recent_messages_filters_tapback_and_empty(chat_db_path, monkeypatch
     assert msgs[0].text == "real"
 
 
+def test_get_recent_messages_includes_attributed_body_when_text_empty(
+    chat_db_path, monkeypatch
+):
+    monkeypatch.setattr(config, "LOOKBACK_MINUTES", 60)
+    monkeypatch.setattr(config, "MESSAGE_FETCH_LIMIT", 20)
+
+    now_ns = reader.datetime_to_apple_ts(datetime.utcnow())
+    populate_chat_db(
+        chat_db_path,
+        text="",
+        date_ns=now_ns,
+        attributed_body=b"\x00\x01\x02",
+    )
+
+    msgs = reader.get_recent_messages(limit=20, lookback_minutes=60)
+    assert len(msgs) == 1
+    assert msgs[0].text == reader.RICH_ONLY_PLACEHOLDER
+
+
 def test_get_recent_messages_respects_lookback(chat_db_path, monkeypatch):
     monkeypatch.setattr(config, "LOOKBACK_MINUTES", 5)
     monkeypatch.setattr(config, "MESSAGE_FETCH_LIMIT", 50)

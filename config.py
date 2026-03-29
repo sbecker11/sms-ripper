@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     )
     stop_reply_text: str = Field(default="STOP", validation_alias="STOP_REPLY_TEXT")
     log_file: str = Field(default="sms_agent.log", validation_alias="LOG_FILE")
+    classify_max_workers: int = Field(
+        default=8,
+        ge=1,
+        le=32,
+        validation_alias="CLASSIFY_MAX_WORKERS",
+    )
 
     @field_validator("chat_db_path", mode="before")
     @classmethod
@@ -60,6 +66,7 @@ LOOKBACK_MINUTES = settings.lookback_minutes
 CHAT_DB_PATH = settings.chat_db_path
 STOP_REPLY_TEXT = settings.stop_reply_text
 LOG_FILE = settings.log_file
+CLASSIFY_MAX_WORKERS = settings.classify_max_workers
 DRY_RUN = False
 # True while main.process_once runs with --quiet (redacted identifiers in action logs; minimal INFO).
 QUIET = False

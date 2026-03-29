@@ -96,7 +96,7 @@ The **`archive`** action copies a row into `<TAG>_archive` and removes the live 
 
 ### Blocklist caveat
 
-True “Block Contact” in Messages is not fully replicated by AppleScript alone. The agent appends identifiers to `blocked_senders.txt` and skips them on later runs; for a full block, use Messages → conversation → Details → Block Contact when needed.
+**Political runs** (`main.py` default policy) do not read or write `blocked_senders.txt`. The **`--policy spam`** path may still append to that file when the **`block`** action runs; it does not cause `main.py` to skip senders on the next run.
 
 ## 6. Configuration (`config.py`)
 
@@ -116,7 +116,7 @@ You can change defaults in code or override them in **`.env`** (same keys as in 
 From the project root, with the venv activated and your key available:
 
 ```bash
-# Agent preview — same filters as a real run: inbound-only, lookback window, blocklist skips.
+# Agent preview — same filters as a real run: inbound-only, lookback window.
 # Logs Attributes, Matched rules, Actions; no archive / send_stop / delete / block side effects.
 python main.py --dry-run
 

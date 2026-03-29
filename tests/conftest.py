@@ -29,7 +29,8 @@ def chat_db_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                 is_from_me INTEGER NOT NULL DEFAULT 0,
                 date INTEGER NOT NULL,
                 associated_message_type INTEGER NOT NULL DEFAULT 0,
-                handle_id INTEGER
+                handle_id INTEGER,
+                attributedBody BLOB
             );
             CREATE TABLE chat_message_join (
                 message_id INTEGER NOT NULL,
@@ -54,6 +55,7 @@ def populate_chat_db(
     chat_identifier: str = "+15551234567",
     sender: str = "+15551234567",
     associated_message_type: int = 0,
+    attributed_body: bytes | None = None,
 ) -> int:
     conn = sqlite3.connect(db_path)
     try:
@@ -66,10 +68,19 @@ def populate_chat_db(
         chat_rowid = cur.lastrowid
         cur.execute(
             """
-            INSERT INTO message (text, is_from_me, date, associated_message_type, handle_id)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO message (
+                text, is_from_me, date, associated_message_type, handle_id, attributedBody
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (text, is_from_me, date_ns, associated_message_type, handle_rowid),
+            (
+                text,
+                is_from_me,
+                date_ns,
+                associated_message_type,
+                handle_rowid,
+                attributed_body,
+            ),
         )
         msg_rowid = cur.lastrowid
         cur.execute(

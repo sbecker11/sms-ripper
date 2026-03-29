@@ -31,9 +31,19 @@ from reader import Message, apple_ts_to_datetime  # noqa: E402
 APPLE_EPOCH_OFFSET = 978307200
 
 # Actions in this project that perform direct SQLite writes on chat.db (see archive.py).
-SQLITE_DB_ACTIONS: frozenset[str] = frozenset({"archive"})
+SQLITE_DB_ACTIONS: frozenset[str] = frozenset({"archive", "purge"})
 
-RECENT_QUERY = """
+def build_recent_query(has_subject: bool) -> str:
+    subj_sel = (
+        "COALESCE(NULLIF(TRIM(m.subject), ''), '')" if has_subject else "''"
+    )
+    where_body = "(m.text IS NOT NULL AND m.text != '')"
+    if has_subject:
+        where_body = (
+            "((m.text IS NOT NULL AND m.text != '') "
+            "OR (m.subject IS NOT NULL AND TRIM(m.subject) != ''))"
+        )
+    return f"""
 SELECT
   m.rowid,
   c.rowid AS chat_id,
@@ -41,13 +51,13 @@ SELECT
   m.is_from_me,
   h.id,
   c.chat_identifier,
-  m.text
+  m.text,
+  {subj_sel} AS subject
 FROM message m
 JOIN chat_message_join cmj ON m.rowid = cmj.message_id
 JOIN chat c ON cmj.chat_id = c.rowid
 LEFT JOIN handle h ON m.handle_id = h.rowid
-WHERE m.text IS NOT NULL
-  AND m.text != ''
+WHERE {where_body}
   AND m.associated_message_type = 0
 ORDER BY m.date DESC
 LIMIT ?;
@@ -89,16 +99,16 @@ def terminal_width() -> int:
             return 80
 
 
-def row_to_message(row: tuple) -> Message:
-    rowid, chat_id, date_ns, is_from_me, handle_id, chat_identifier, text = row
+def row_to_message(row: sqlite3.Row) -> Message:
     return Message(
-        rowid=int(rowid),
-        chat_id=int(chat_id),
-        chat_identifier=(chat_identifier or ""),
-        sender=handle_id,
-        text=text or "",
-        is_from_me=bool(is_from_me),
-        date=apple_ts_to_datetime(int(date_ns) if date_ns else None),
+        rowid=int(row["rowid"]),
+        chat_id=int(row["chat_id"]),
+        chat_identifier=(row["chat_identifier"] or ""),
+        sender=row["id"],
+        text=row["text"] or "",
+        subject=row["subject"] or "",
+        is_from_me=bool(row["is_from_me"]),
+        date=apple_ts_to_datetime(int(row["date"]) if row["date"] else None),
         attributes=[],
     )
 
@@ -111,7 +121,7 @@ def classify_and_evaluate(
         msg.attributes = ["UNKNOWN"]
     else:
         try:
-            attrs, _reason = classifier.classify_message(msg.text)
+            attrs, _reason = classifier.classify_message(msg.combined_plaintext())
             msg.attributes = attrs
         except Exception:
             msg.attributes = ["UNKNOWN"]
@@ -153,7 +163,7 @@ def main() -> int:
         "--policy",
         choices=["political", "spam"],
         default="political",
-        help="Rule set: political (POLITICAL → archive/STOP/block) or spam (SPAM/STOP/SCAM). Run political first.",
+        help="Rule set: political (unsub text → purge; POLITICAL → archive) or spam (SPAM/STOP/SCAM).",
     )
     args = parser.parse_args()
 
@@ -170,16 +180,20 @@ def main() -> int:
         return 1
 
     uri = f"file:{db}?mode=ro"
+    conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(uri, uri=True)
+        conn.row_factory = sqlite3.Row
+        msg_cols = {r[1] for r in conn.execute("PRAGMA table_info(message)").fetchall()}
+        has_subject = "subject" in msg_cols
+        query = build_recent_query(has_subject)
+        rows = conn.execute(query, (args.limit,)).fetchall()
     except sqlite3.Error as e:
         print(f"SQLite error: {e}", file=sys.stderr)
         return 1
-
-    try:
-        rows = conn.execute(RECENT_QUERY, (args.limit,)).fetchall()
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     total = len(rows)
     width = terminal_width()
@@ -191,11 +205,11 @@ def main() -> int:
 
     for i, row in enumerate(rows):
         msg = row_to_message(row)
-        date_ns = row[2]
-        is_from_me = int(row[3] or 0)
-        handle_id = row[4]
-        chat_identifier = row[5]
-        body = msg.text
+        date_ns = row["date"]
+        is_from_me = int(row["is_from_me"] or 0)
+        handle_id = row["id"]
+        chat_identifier = row["chat_identifier"]
+        body = msg.combined_plaintext()
         ts = fmt_datetime_utc(int(date_ns) if date_ns else None)
         who = fmt_source(is_from_me, handle_id, chat_identifier)
 
@@ -227,7 +241,7 @@ def main() -> int:
             tag_lines = ["Tags: UNKNOWN  (not classified — rules use [UNKNOWN])"]
         else:
             try:
-                attrs, reason = classifier.classify_message(msg.text)
+                attrs, reason = classifier.classify_message(msg.combined_plaintext())
                 msg.attributes = attrs
                 rshort = (reason or "").replace("\n", " ").strip()
                 if len(rshort) > 120:

@@ -34,8 +34,8 @@ MESSAGES_QUIT_PROMPT = (
     "While Messages is running, the database may be locked and changes can be unsafe."
 )
 
-# Only archive uses sqlite3 on chat.db from this codebase. (delete uses AppleScript.)
-DIRECT_SQLITE_ARCHIVE_ACTIONS: frozenset[str] = frozenset({"archive"})
+# Direct sqlite3 writes on chat.db in phase 1 (Messages must be quit). "delete" is AppleScript thread delete.
+DIRECT_SQLITE_ARCHIVE_ACTIONS: frozenset[str] = frozenset({"archive", "purge"})
 
 
 def _run_applescript(script: str) -> tuple[bool, str]:
@@ -243,7 +243,10 @@ do shell script "echo 'Blocking {target}'"
         logger.debug(block_msg)
     else:
         logger.warning(block_msg)
-    _write_local_blocklist(target)
+    if config.DRY_RUN:
+        _info(f"[DRY RUN] Would append {target!r} to {BLOCKLIST_FILE} (skipped)")
+    else:
+        _write_local_blocklist(target)
     message.actions_taken.append("block")
     return True
 
@@ -366,21 +369,30 @@ ACTION_MAP = {
     "block":     block_sender,
     "delete":    delete_thread,
     "archive":   archive_message,
+    "purge":     archive.purge_live_message,
     "log_only":  log_only,
 }
 
 
 def _execution_action_order(actions: list[str]) -> list[str]:
-    """Ensure archive runs before delete; keep relative order within each group."""
-    archives = [a for a in actions if a == "archive"]
+    """Ensure archive/purge run before UI delete; keep relative order within each group."""
+    db_row_ops = [a for a in actions if a in ("archive", "purge")]
     deletes = [a for a in actions if a == "delete"]
-    rest = [a for a in actions if a not in ("archive", "delete")]
-    return archives + rest + deletes
+    rest = [a for a in actions if a not in ("archive", "purge", "delete")]
+    return db_row_ops + rest + deletes
 
 
 def action_list_needs_sqlite_archive(actions: list[str]) -> bool:
-    """True if ordered actions include direct chat.db archive (requires Messages quit)."""
+    """True if ordered actions include direct chat.db archive or purge (requires Messages quit)."""
     return any(a in DIRECT_SQLITE_ARCHIVE_ACTIONS for a in _execution_action_order(actions))
+
+
+def phase1_sqlite_complete(action_list: list[str], results: dict[str, bool]) -> bool:
+    """True if every archive/purge action in action_list succeeded in results."""
+    for a in _execution_action_order(action_list):
+        if a in DIRECT_SQLITE_ARCHIVE_ACTIONS and not results.get(a):
+            return False
+    return True
 
 
 def action_list_needs_messages_activate(actions: list[str]) -> bool:

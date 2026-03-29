@@ -120,9 +120,19 @@ def test_execute_actions_dry_run_no_subprocess(tmp_path, monkeypatch):
     assert "log_only" in msg.actions_taken
 
 
-def test_block_sender_appends_blocklist(tmp_path, monkeypatch):
+def test_block_sender_dry_run_does_not_append_blocklist(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(config, "DRY_RUN", True)
+    msg = _sample_message()
+
+    assert actions.block_sender(msg) is True
+    assert not (tmp_path / actions.BLOCKLIST_FILE).exists()
+    assert "block" in msg.actions_taken
+
+
+def test_block_sender_appends_blocklist_when_live(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "DRY_RUN", False)
     msg = _sample_message()
 
     assert actions.block_sender(msg) is True
@@ -318,7 +328,14 @@ def test_execute_actions_batch_sqlite_ok_true_skips_guard(monkeypatch, tmp_path)
 
 def test_action_list_needs_sqlite_archive():
     assert actions.action_list_needs_sqlite_archive(["send_stop", "archive"]) is True
+    assert actions.action_list_needs_sqlite_archive(["purge"]) is True
     assert actions.action_list_needs_sqlite_archive(["send_stop", "delete"]) is False
+
+
+def test_phase1_sqlite_complete():
+    assert actions.phase1_sqlite_complete(["purge", "send_stop"], {"purge": True}) is True
+    assert actions.phase1_sqlite_complete(["purge"], {"purge": False}) is False
+    assert actions.phase1_sqlite_complete(["archive"], {"archive": True}) is True
 
 
 def test_action_list_needs_messages_activate():
@@ -339,6 +356,14 @@ def test_execution_action_order_archive_before_delete():
     assert actions._execution_action_order(["delete", "send_stop", "archive"]) == [
         "archive",
         "send_stop",
+        "delete",
+    ]
+
+
+def test_execution_action_order_purge_with_archive():
+    assert actions._execution_action_order(["delete", "purge", "archive"]) == [
+        "purge",
+        "archive",
         "delete",
     ]
 

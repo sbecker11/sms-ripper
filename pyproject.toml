@@ -26,12 +26,16 @@ preview-recent-spam = "python scripts/dry_run_recent.py --policy spam"
 preview-recent-spam-offline = "python scripts/dry_run_recent.py --policy spam --no-classify"
 # Extra args append to the command — do not use a bare `--` (it is passed to main.py and breaks argparse).
 run-political = "python main.py"
-# Phase 2: after STOP/block/etc., set is_read in chat.db so Dock unread may drop while Messages is open.
+# Phase 2: after spam-policy UI actions, optionally set is_read (Dock badge); political runs are archive-only.
 run-political-mark-read = "python main.py --mark-read-phase2"
 # Mark older inbound unread read in chat.db (keep K newest). Extra flags: see scripts/bulk_mark_read.py --help
 bulk-mark-read = "python scripts/bulk_mark_read.py --keep-unread 10"
 # Read-only unread breakdown vs Dock. Nuclear clear: poe bulk-mark-read --keep-unread 0 --every-inbound
 badge-diagnose = "python scripts/bulk_mark_read.py --diagnose"
+# Sync read flags in chat.db, then restart Dock + Notification Center (stuck badge vs diagnose).
+fix-badge = { sequence = ["bulk-mark-read-clear", "fix-messages-badge-shell"] }
+bulk-mark-read-clear = "python scripts/bulk_mark_read.py --keep-unread 0 --fix-joined-outbound-read"
+fix-messages-badge-shell = "bash scripts/fix_messages_badge_stuck.sh"
 # Backup chat.db, then live-step unread down (Messages open; ~0.12s per row).
 doit = { sequence = ["backup-db", "mark-read-live"] }
 mark-read-live = "python scripts/bulk_mark_read.py --keep-unread 10 --live --delay 0.12"
@@ -40,13 +44,27 @@ run-spam = "python main.py --policy spam"
 run-political-quiet-wide = "python main.py --quiet --lookback 10080 --limit 500"
 run-spam-quiet-wide = "python main.py --policy spam --quiet --lookback 10080 --limit 500"
 political-all = { sequence = ["backup-db", "quit-messages", "run-political-quiet-wide"] }
+# After political-all: clear local unread + refresh Dock, then show diagnose (no re-classify).
+political-done = { sequence = ["fix-badge", "badge-diagnose"] }
 spam-all = { sequence = ["backup-db", "quit-messages", "run-spam-quiet-wide"] }
 # Copy CHAT_DB_PATH (from .env) to backups/chat.db.UTC-<YYYY-MM-DDTHH-MM-SSZ>.bak
 backup-db = "python scripts/backup_chat_db.py"
 # Quit Messages (iMessage) if running — run before backup-db / archive (macOS)
 quit-messages = "bash scripts/quit_messages.sh"
+# Experimental: double-click top N sidebar rows (Accessibility) — ghost unread / "No Conversation Selected"
+messages-scrub-ui = "python scripts/messages_scrub_sidebar.py"
 # Print a copy-pasteable `cd …` to repo root (backups/, logs, blocklist, .env)
 echo-cd-root = "python scripts/echo_repo_cd.py"
+# Background agent (launchd): install once; see README "Background daemon".
+daemon-install = "bash scripts/install_sms_ripper_launchagent.sh install"
+daemon-install-15m = "bash scripts/install_sms_ripper_launchagent.sh install 900"
+daemon-uninstall = "bash scripts/install_sms_ripper_launchagent.sh uninstall"
+daemon-status = "bash scripts/install_sms_ripper_launchagent.sh status"
+daemon-cycle-once = "python scripts/daemon_cycle.py"
+daemon-fda-path = "python scripts/print_fda_python.py"
+fda-assist = "python scripts/fda_assist.py"
+# Probe chat.db reads (Python, /bin/cp, sqlite3) — ground truth for Full Disk Access; not a TCC DB reader.
+verify-fda = "python scripts/verify_fda.py"
 # chat.db read-only reports (macOS + Full Disk Access; see docs/QUERIES.md)
 query-total = "bash scripts/run_chat_query.sh queries/total_messages.sql"
 query-text = "bash scripts/run_chat_query.sh queries/text_messages_no_tapback.sql"

@@ -60,18 +60,7 @@ def test_process_once_read_error(main_mod, monkeypatch):
     main_mod.process_once(10, 60)
 
 
-def test_process_once_skips_blocklisted(main_mod, monkeypatch):
-    monkeypatch.setattr(main_mod.actions, "load_blocklist", lambda: {"+15550003333"})
-    monkeypatch.setattr(
-        main_mod.reader,
-        "get_recent_messages",
-        lambda **k: [_make_message()],
-    )
-    main_mod.process_once(10, 60)
-
-
 def test_process_once_classify_error(main_mod, monkeypatch):
-    monkeypatch.setattr(main_mod.actions, "load_blocklist", lambda: set())
     monkeypatch.setattr(
         main_mod.reader,
         "get_recent_messages",
@@ -86,7 +75,6 @@ def test_process_once_classify_error(main_mod, monkeypatch):
 
 
 def test_process_once_log_only_branch(main_mod, monkeypatch):
-    monkeypatch.setattr(main_mod.actions, "load_blocklist", lambda: set())
     monkeypatch.setattr(
         main_mod.reader,
         "get_recent_messages",
@@ -106,7 +94,6 @@ def test_process_once_log_only_branch(main_mod, monkeypatch):
 
 
 def test_process_once_executes_actions_success(main_mod, monkeypatch):
-    monkeypatch.setattr(main_mod.actions, "load_blocklist", lambda: set())
     monkeypatch.setattr(
         main_mod.reader,
         "get_recent_messages",
@@ -120,7 +107,7 @@ def test_process_once_executes_actions_success(main_mod, monkeypatch):
     monkeypatch.setattr(
         main_mod.actions,
         "execute_actions",
-        lambda m, a, **kw: {"archive": True, "send_stop": True, "block": True},
+        lambda m, a, **kw: {"archive": True},
     )
     main_mod.process_once(10, 60)
 
@@ -134,7 +121,6 @@ def test_process_once_messages_quit_guard_once_for_batch(main_mod, monkeypatch):
         return True
 
     monkeypatch.setattr(main_mod.actions, "messages_quit_guard", guard)
-    monkeypatch.setattr(main_mod.actions, "load_blocklist", lambda: set())
     monkeypatch.setattr(
         main_mod.reader,
         "get_recent_messages",
@@ -151,14 +137,13 @@ def test_process_once_messages_quit_guard_once_for_batch(main_mod, monkeypatch):
     monkeypatch.setattr(
         main_mod.actions,
         "execute_actions",
-        lambda m, a, **kw: {"archive": True, "send_stop": True, "block": True},
+        lambda m, a, **kw: {"archive": True},
     )
     main_mod.process_once(10, 60)
     assert guard_calls["n"] == 1
 
 
 def test_process_once_execute_all_fail(main_mod, monkeypatch):
-    monkeypatch.setattr(main_mod.actions, "load_blocklist", lambda: set())
     monkeypatch.setattr(
         main_mod.reader,
         "get_recent_messages",
@@ -172,7 +157,7 @@ def test_process_once_execute_all_fail(main_mod, monkeypatch):
     monkeypatch.setattr(
         main_mod.actions,
         "execute_actions",
-        lambda m, a, **kw: {"archive": False, "send_stop": False, "block": False},
+        lambda m, a, **kw: {"archive": False},
     )
     main_mod.process_once(10, 60)
 

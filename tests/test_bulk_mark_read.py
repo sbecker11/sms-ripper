@@ -82,6 +82,127 @@ def test_bulk_mark_read_dry_run_no_write(tmp_path: Path):
     assert n == 0
 
 
+def test_bulk_mark_read_fix_orphan_outbound(tmp_path: Path):
+    db = tmp_path / "chat.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE message (
+            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+            date INTEGER,
+            is_read INTEGER,
+            is_from_me INTEGER,
+            associated_message_type INTEGER,
+            date_read INTEGER DEFAULT 0
+        );
+        CREATE TABLE chat_message_join (message_id INTEGER, chat_id INTEGER);
+        INSERT INTO message (date, is_read, is_from_me, associated_message_type)
+        VALUES (100, 0, 1, 0);
+        INSERT INTO message (date, is_read, is_from_me, associated_message_type)
+        VALUES (200, 0, 1, 0);
+        INSERT INTO chat_message_join VALUES (2, 1);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    r = _run_script(db, "--keep-unread", "0", "--fix-orphan-outbound-read")
+    assert r.returncode == 0, r.stderr
+    assert "Fixed 1 orphan outbound" in r.stdout
+
+    conn = sqlite3.connect(db)
+    orphan = conn.execute(
+        "SELECT is_read FROM message WHERE rowid = 1"
+    ).fetchone()[0]
+    joined = conn.execute(
+        "SELECT is_read FROM message WHERE rowid = 2"
+    ).fetchone()[0]
+    conn.close()
+    assert orphan == 1
+    assert joined == 0
+
+
+def test_bulk_mark_read_fix_joined_outbound(tmp_path: Path):
+    db = tmp_path / "chat.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE chat (
+            ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
+            last_read_message_timestamp INTEGER DEFAULT 0
+        );
+        CREATE TABLE message (
+            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+            date INTEGER,
+            is_read INTEGER,
+            is_from_me INTEGER,
+            associated_message_type INTEGER,
+            date_read INTEGER DEFAULT 0
+        );
+        CREATE TABLE chat_message_join (message_id INTEGER, chat_id INTEGER);
+        INSERT INTO chat (last_read_message_timestamp) VALUES (50);
+        INSERT INTO message (date, is_read, is_from_me, associated_message_type)
+        VALUES (100, 0, 1, 0);
+        INSERT INTO chat_message_join VALUES (1, 1);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    r = _run_script(db, "--keep-unread", "0", "--fix-joined-outbound-read")
+    assert r.returncode == 0, r.stderr
+    assert "Fixed 1 joined outbound" in r.stdout
+
+    conn = sqlite3.connect(db)
+    ir = conn.execute("SELECT is_read, date_read FROM message WHERE rowid = 1").fetchone()
+    lr = conn.execute(
+        "SELECT last_read_message_timestamp FROM chat WHERE ROWID = 1"
+    ).fetchone()[0]
+    conn.close()
+    assert ir == (1, 100)
+    assert lr == 100
+
+
+def test_bulk_mark_read_syncs_chat_last_read_pointer(tmp_path: Path):
+    """Messages Dock badge follows chat.last_read_message_timestamp, not is_read alone."""
+    db = tmp_path / "chat.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE chat (
+            ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
+            last_read_message_timestamp INTEGER DEFAULT 0
+        );
+        CREATE TABLE message (
+            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+            date INTEGER,
+            is_read INTEGER,
+            is_from_me INTEGER,
+            associated_message_type INTEGER,
+            date_read INTEGER DEFAULT 0
+        );
+        CREATE TABLE chat_message_join (message_id INTEGER, chat_id INTEGER);
+        INSERT INTO chat (last_read_message_timestamp) VALUES (100);
+        INSERT INTO message (date, is_read, is_from_me, associated_message_type)
+        VALUES (500, 0, 0, 0);
+        INSERT INTO chat_message_join VALUES (1, 1);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    r = _run_script(db, "--keep-unread", "0")
+    assert r.returncode == 0, r.stderr
+    assert "synced chat read pointers" in r.stdout
+
+    conn = sqlite3.connect(db)
+    lr = conn.execute(
+        "SELECT last_read_message_timestamp FROM chat WHERE ROWID = 1"
+    ).fetchone()[0]
+    conn.close()
+    assert lr == 500
+
+
 def test_bulk_mark_read_nothing_to_do(tmp_path: Path):
     db = tmp_path / "chat.db"
     conn = sqlite3.connect(db)

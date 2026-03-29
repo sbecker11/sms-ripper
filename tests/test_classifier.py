@@ -9,6 +9,7 @@ import urllib.error
 
 import classifier
 import config
+import reader
 
 
 def _anthropic_response_payload(inner_json: str) -> dict:
@@ -100,6 +101,14 @@ def test_classify_message_missing_api_key():
     with patch.object(config, "ANTHROPIC_API_KEY", ""):
         with pytest.raises(ValueError, match=r"ANTHROPIC_API_KEY.*\.env"):
             classifier.classify_message("hi")
+
+
+def test_classify_message_rich_placeholder_skips_http():
+    with patch.object(classifier.urllib.request, "urlopen") as urlopen_mock:
+        attrs, reason = classifier.classify_message(reader.RICH_ONLY_PLACEHOLDER)
+    urlopen_mock.assert_not_called()
+    assert attrs == ["POLITICAL", "SPAM"]
+    assert "no API" in reason
 
 
 def test_classify_message_adds_political_for_white_house(monkeypatch):

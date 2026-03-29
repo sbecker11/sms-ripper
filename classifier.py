@@ -20,6 +20,7 @@ import urllib.request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 import config
+import reader
 
 SYSTEM_PROMPT = """You are a message classification agent.
 Given an SMS or iMessage, return a JSON object with this exact shape:
@@ -119,6 +120,13 @@ def classify_message(text: str) -> tuple[list[str], str]:
     Returns (attributes, reason) for a given message text.
     Falls back to ["UNKNOWN"] on any API error.
     """
+    if text == reader.RICH_ONLY_PLACEHOLDER:
+        # No plaintext in chat.db; API would see the same prompt for every row. Assume bulk SMS.
+        return (
+            ["POLITICAL", "SPAM"],
+            "attributedBody only in chat.db — heuristic POLITICAL+SPAM (no API)",
+        )
+
     if not config.ANTHROPIC_API_KEY:
         raise ValueError("ANTHROPIC_API_KEY is not set in .env (project root).")
 

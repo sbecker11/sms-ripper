@@ -6,18 +6,19 @@ SMS Agent — reads recent iMessages, classifies them, and takes action.
 Usage:
     python main.py               # run once (default policy: political)
     python main.py --dry-run     # preview actions without executing
-    python main.py --policy spam   # second pass: SPAM / SCAM (after political)
+    python main.py --policy spam   # second pass: SPAM / SCAM (optional; uses STOP/block/delete)
     python main.py --loop 60       # run every 60 seconds
     python main.py --limit 100     # process last 100 messages
     python main.py --lookback 120  # look back 120 minutes
     python main.py --quiet   # minimal progress lines only (no sender/body/reason in logs)
-    python main.py --mark-read-phase2   # phase 2: mark each handled row read (Dock badge)
+    python main.py --mark-read-phase2   # optional: after UI actions, mark rows read (badge-related)
 """
 
 import argparse
 import logging
-import time
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import config
 import reader
@@ -57,10 +58,7 @@ def process_once(
     _prev_quiet = getattr(config, "QUIET", False)
     config.QUIET = quiet
     try:
-        # 1. Load blocklist — skip already-blocked senders
-        blocklist = actions.load_blocklist()
-
-        # 2. Fetch recent inbound messages
+        # 1. Fetch recent inbound messages
         try:
             messages = reader.get_recent_messages(limit=limit, lookback_minutes=lookback)
         except FileNotFoundError as e:
@@ -80,36 +78,56 @@ def process_once(
         pending: list[tuple[Message, list[str], int]] = []
         n_messages = len(messages)
 
+        def _classify_at_index(idx: int, msg: Message) -> tuple[int, object]:
+            try:
+                return (idx, classifier.classify_message(msg.combined_plaintext()))
+            except Exception as e:
+                return (idx, e)
+
+        classify_by_index: dict[int, tuple[list[str], str] | Exception] = {}
+        need_indices = list(range(len(messages)))
+        workers = max(
+            1,
+            min(config.CLASSIFY_MAX_WORKERS, len(need_indices)),
+        )
+        if len(need_indices) > 1:
+            logger.info(
+                f"Classifying {len(need_indices)} message(s) with up to {workers} parallel workers."
+            )
+        if need_indices:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [
+                    pool.submit(_classify_at_index, idx, messages[idx])
+                    for idx in need_indices
+                ]
+                for fut in as_completed(futures):
+                    idx, payload = fut.result()
+                    classify_by_index[idx] = payload
+
         for i, msg in enumerate(messages, start=1):
             if not quiet:
                 logger.info(f"processing {policy.upper()} message {i} of {n_messages}")
-            sender_id = msg.sender or msg.chat_identifier
-
-            # Skip already-blocked senders
-            if sender_id in blocklist:
-                if quiet:
-                    logger.info(f"[quiet] {i}/{n_messages} · blocked")
-                else:
-                    logger.info(f"[SKIP] {sender_id} is already blocked.")
-                stats["skipped"] += 1
-                continue
-
             if not quiet:
                 logger.info(f"Processing: {msg.display()}")
 
-            # 3. Classify
-            try:
-                attrs, reason = classifier.classify_message(msg.text)
-                msg.attributes = attrs
-                if not quiet:
-                    logger.info(f"  → Attributes: {attrs} | Reason: {reason}")
-            except Exception as e:
+            idx = i - 1
+            raw_class = classify_by_index.get(idx)
+            if raw_class is None:
+                stats["errors"] += 1
+                continue
+            if isinstance(raw_class, Exception):
+                e = raw_class
                 if quiet:
                     logger.error(f"[quiet] {i}/{n_messages} · classify failed: {e}")
                 else:
                     logger.error(f"  → Classification failed: {e}")
                 stats["errors"] += 1
                 continue
+
+            attrs, reason = raw_class
+            msg.attributes = attrs
+            if not quiet:
+                logger.info(f"  → Attributes: {attrs} | Reason: {reason}")
 
             # 4. Evaluate rules → get actions
             action_list, matched_rule_names = rules.evaluate_detailed(msg, policy=policy)
@@ -140,9 +158,14 @@ def process_once(
             if actions.action_list_needs_sqlite_archive(al)
         )
         if pending and (archive_queued or stop_queued):
+            ui_note = (
+                f"{stop_queued} message(s) queued for STOP / other UI after archive."
+                if stop_queued
+                else "Archive only — no STOP or other UI phase for this batch."
+            )
             logger.info(
-                f"Two-stage plan: phase 1 = archive for {archive_queued} message(s) while Messages is "
-                f"quit; STOP and other UI actions deferred — {stop_queued} message(s) queued for STOP."
+                f"Two-stage plan: phase 1 = chat.db row ops (archive/purge) for {archive_queued} "
+                f"message(s) while Messages is quit; {ui_note}"
             )
 
         # One quit check before any chat.db archives in this run.
@@ -156,7 +179,7 @@ def process_once(
         if pending and not config.DRY_RUN and any(
             actions.action_list_needs_sqlite_archive(al) for _, al, _ in pending
         ):
-            logger.info("--- Phase 1: archive (Messages should be quit) — STOP not sent yet ---")
+            logger.info("--- Phase 1: archive/purge (Messages should be quit) ---")
 
         phase1_results: list[dict[str, bool]] = []
         for msg, action_list, _orig_i in pending:
@@ -171,15 +194,16 @@ def process_once(
 
         archive_failed_for_needed = any(
             actions.action_list_needs_sqlite_archive(al)
-            and not phase1_results[i].get("archive", False)
+            and not actions.phase1_sqlite_complete(al, phase1_results[i])
             for i, (_, al, _) in enumerate(pending)
         )
         if archive_failed_for_needed:
             logger.warning(
-                "[ARCHIVE] Phase 1 failed for at least one row that needed archive — "
-                "the live message may still be in Messages. Phase 2 still runs (STOP/block/etc.). "
-                "If you see 'no such function: before_delete_attachment_path' or "
-                "'delete_attachment_path', update sms-ripper (SQL trigger stubs) and re-run with Messages quit for phase 1."
+                "[ARCHIVE] Phase 1 failed for at least one row that needed archive/purge — "
+                "the live message may still be in Messages. Phase 2 still runs if queued. "
+                "If you see 'no such function: before_delete_attachment_path', "
+                "'after_delete_message_plugin', or 'delete_attachment_path', update sms-ripper "
+                "(SQL trigger stubs) and re-run with Messages quit for phase 1."
             )
 
         any_ui = any(
@@ -260,8 +284,8 @@ def main():
         "--policy",
         choices=["political", "spam"],
         default="political",
-        help="Rule set: political (archive/STOP/block for POLITICAL) or spam (STOP/block/delete for SPAM/SCAM). "
-        "Run political first, then spam in a separate pass.",
+        help="Rule set: political (archive POLITICAL non-personal only) or spam (STOP/block/delete for SPAM/SCAM). "
+        "Run political first, then spam in a separate pass if desired.",
     )
     parser.add_argument(
         "--quiet",

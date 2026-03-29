@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Mark inbound unread rows read in Messages chat.db (is_read + date_read, plus backfill).
 
+Also advances chat.last_read_message_timestamp per thread (Messages Dock badge often follows this,
+not message.is_read alone). Use --no-sync-chat-read to skip.
+
 Default: keep the K newest unread, mark older inbound as read. Options: --live, --diagnose,
 --include-associated, --every-inbound. See --help. Poe: doit, bulk-mark-read, badge-diagnose."""
 
@@ -137,11 +140,238 @@ def _print_diagnose(conn: sqlite3.Connection, cols: set[str], read_col: str, qre
     except sqlite3.Error as e:
         print(f"(Could not read chat schema: {e})", flush=True)
 
+    try:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat'"
+        ).fetchone() and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_message_join'"
+        ).fetchone():
+            ccols = {row[1] for row in conn.execute("PRAGMA table_info(chat)").fetchall()}
+            if "last_read_message_timestamp" in ccols:
+                lag = int(
+                    conn.execute(
+                        f"""
+                        SELECT COUNT(*) FROM chat c
+                        WHERE EXISTS (
+                          SELECT 1 FROM chat_message_join j
+                          JOIN message m ON m.rowid = j.message_id
+                          WHERE j.chat_id = c.ROWID
+                            AND NOT (
+                              IFNULL(m.is_from_me, 0) = 0 AND IFNULL(m.{qread}, 0) = 0
+                            )
+                        )
+                        AND IFNULL(c.last_read_message_timestamp, 0) < (
+                          SELECT IFNULL(MAX(m2.date), 0) FROM chat_message_join j2
+                          JOIN message m2 ON m2.rowid = j2.message_id
+                          WHERE j2.chat_id = c.ROWID
+                            AND NOT (
+                              IFNULL(m2.is_from_me, 0) = 0 AND IFNULL(m2.{qread}, 0) = 0
+                            )
+                        )
+                        """
+                    ).fetchone()[0]
+                )
+                if lag:
+                    print(
+                        f"Chats where last_read_message_timestamp lags read state: {lag} "
+                        f"(re-run bulk_mark_read without --no-sync-chat-read to fix; affects Dock badge).",
+                        flush=True,
+                    )
+    except sqlite3.Error:
+        pass
+
+    try:
+        n_orphan = _count_orphan_outbound_unread(conn, qread)
+        if n_orphan:
+            print(
+                f"Outbound rows stuck unread & not in any chat (orphan): {n_orphan} "
+                f"— can confuse the Messages list; try --fix-orphan-outbound-read.",
+                flush=True,
+            )
+    except sqlite3.Error:
+        pass
+
+    try:
+        n_joined = _count_joined_outbound_unread(conn, qread)
+        if n_joined:
+            print(
+                f"Outbound rows in threads still is_read=0 (joined): {n_joined} "
+                f"— Dock badge can follow these; try --fix-joined-outbound-read (see --help).",
+                flush=True,
+            )
+    except sqlite3.Error:
+        pass
+
     print(
-        "If inbound unread is 0 here but Dock shows a number, sync/iCloud is the usual cause.",
+        "If inbound unread is 0 here but Dock still disagrees, iCloud/iPhone can restate counts.",
+        flush=True,
+    )
+    print(
+        "The sidebar Unread filter can follow iCloud and not match this SQLite snapshot.",
         flush=True,
     )
     print("=== end diagnose ===", flush=True)
+
+
+def _count_orphan_outbound_unread(conn: sqlite3.Connection, qread: str) -> int:
+    """Outbound rows with is_read=0 that are not in chat_message_join (sync/schema leftovers)."""
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_message_join'"
+    ).fetchone():
+        return 0
+    return int(
+        conn.execute(
+            f"""
+            SELECT COUNT(*) FROM message
+            WHERE IFNULL(is_from_me, 0) = 1 AND IFNULL({qread}, 0) = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM chat_message_join j WHERE j.message_id = message.rowid
+              )
+            """
+        ).fetchone()[0]
+    )
+
+
+def _run_orphan_outbound_fix(
+    conn: sqlite3.Connection,
+    cols: set[str],
+    qread: str,
+    args: argparse.Namespace,
+) -> None:
+    if not args.fix_orphan_outbound_read:
+        return
+    n = _count_orphan_outbound_unread(conn, qread)
+    if args.dry_run:
+        if n:
+            print(
+                f"[dry-run] Would fix {n} orphan outbound stuck-unread row(s).",
+                flush=True,
+            )
+        return
+    if n == 0:
+        return
+    updated = _fix_orphan_outbound_read(conn, cols, qread)
+    if updated:
+        print(
+            f"Fixed {updated} orphan outbound stuck-unread row(s) "
+            "(no chat_message_join link).",
+            flush=True,
+        )
+
+
+def _fix_orphan_outbound_read(
+    conn: sqlite3.Connection, cols: set[str], qread: str
+) -> int:
+    """Mark orphan outbound stuck-unread rows read (does not touch joined thread messages)."""
+    set_clause = _set_mark_read_sql(cols, qread)
+    cur = conn.execute(
+        f"""
+        UPDATE message SET {set_clause}
+        WHERE IFNULL(is_from_me, 0) = 1 AND IFNULL({qread}, 0) = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM chat_message_join j WHERE j.message_id = message.rowid
+          )
+        """
+    )
+    conn.commit()
+    return cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
+
+
+def _count_joined_outbound_unread(conn: sqlite3.Connection, qread: str) -> int:
+    """Outbound is_read=0 rows that are linked to a chat (not orphans)."""
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_message_join'"
+    ).fetchone():
+        return 0
+    return int(
+        conn.execute(
+            f"""
+            SELECT COUNT(*) FROM message m
+            WHERE IFNULL(m.is_from_me, 0) = 1 AND IFNULL(m.{qread}, 0) = 0
+              AND EXISTS (
+                SELECT 1 FROM chat_message_join j WHERE j.message_id = m.rowid
+              )
+            """
+        ).fetchone()[0]
+    )
+
+
+def _fix_joined_outbound_read(
+    conn: sqlite3.Connection, cols: set[str], qread: str
+) -> tuple[int, set[int]]:
+    """
+    Mark joined outbound stuck-unread rows read. May affect read-receipt / delivery UI for those
+    messages; use when the Dock badge disagrees with inbound unread counts.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_message_join'"
+    ).fetchone():
+        return 0, set()
+    rowids = [
+        int(r[0])
+        for r in conn.execute(
+            f"""
+            SELECT m.rowid FROM message m
+            WHERE IFNULL(m.is_from_me, 0) = 1 AND IFNULL(m.{qread}, 0) = 0
+              AND EXISTS (
+                SELECT 1 FROM chat_message_join j WHERE j.message_id = m.rowid
+              )
+            """
+        ).fetchall()
+    ]
+    if not rowids:
+        return 0, set()
+    set_clause = _set_mark_read_sql(cols, qread)
+    ph = ",".join("?" * len(rowids))
+    conn.execute(
+        f"UPDATE message SET {set_clause} WHERE rowid IN ({ph})",
+        rowids,
+    )
+    conn.commit()
+    chat_ids = _distinct_chat_ids_for_messages(conn, rowids)
+    return len(rowids), chat_ids
+
+
+def _run_joined_outbound_fix(
+    conn: sqlite3.Connection,
+    cols: set[str],
+    qread: str,
+    args: argparse.Namespace,
+) -> None:
+    if not args.fix_joined_outbound_read:
+        return
+    n = _count_joined_outbound_unread(conn, qread)
+    if args.dry_run:
+        if n:
+            print(
+                f"[dry-run] Would fix {n} joined outbound stuck-unread row(s) "
+                "(your sends in threads).",
+                flush=True,
+            )
+        return
+    if n == 0:
+        return
+    updated, chat_ids = _fix_joined_outbound_read(conn, cols, qread)
+    if updated:
+        print(
+            f"Fixed {updated} joined outbound stuck-unread row(s) "
+            "(outbound messages in chat_message_join).",
+            flush=True,
+        )
+    if (
+        updated
+        and not args.no_sync_chat_read
+        and conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat'"
+        ).fetchone()
+    ):
+        n_sync = _sync_chat_last_read_timestamps(conn, qread, chat_ids)
+        if n_sync > 0:
+            print(
+                f"Synced chat.last_read_message_timestamp ({n_sync} chat row(s)) "
+                "after joined-outbound fix.",
+                flush=True,
+            )
 
 
 def _report_leftover_unread(conn: sqlite3.Connection, cols: set[str], qread: str) -> None:
@@ -164,6 +394,85 @@ def _report_leftover_unread(conn: sqlite3.Connection, cols: set[str], qread: str
         f"Still unread: {total} total ({plain} plain, {reactions} reaction/tapback). "
         "Tip: --include-associated or --every-inbound; 0 here but Dock≠0 → iCloud/iPhone."
     )
+
+
+def _distinct_chat_ids_for_messages(
+    conn: sqlite3.Connection, message_rowids: list[int]
+) -> set[int]:
+    if not message_rowids:
+        return set()
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_message_join'"
+    ).fetchone():
+        return set()
+    ph = ",".join("?" * len(message_rowids))
+    rows = conn.execute(
+        f"SELECT DISTINCT chat_id FROM chat_message_join WHERE message_id IN ({ph})",
+        message_rowids,
+    ).fetchall()
+    return {int(r[0]) for r in rows}
+
+
+def _sync_chat_last_read_timestamps(
+    conn: sqlite3.Connection,
+    qread: str,
+    chat_rowids: set[int] | None,
+) -> int:
+    """
+    Set chat.last_read_message_timestamp to the latest message.date that is outbound or
+    inbound-read. Matches how unread should clear when message rows are marked read.
+    If chat_rowids is None, update every chat that has at least one such message.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat'"
+    ).fetchone():
+        return 0
+    chat_cols = {row[1] for row in conn.execute("PRAGMA table_info(chat)").fetchall()}
+    if "last_read_message_timestamp" not in chat_cols:
+        return 0
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_message_join'"
+    ).fetchone():
+        return 0
+
+    read_ok = (
+        f"NOT (IFNULL(m.is_from_me, 0) = 0 AND IFNULL(m.{qread}, 0) = 0)"
+    )
+    sub_select = f"""
+        SELECT IFNULL(MAX(m.date), 0)
+        FROM chat_message_join j
+        JOIN message m ON m.rowid = j.message_id
+        WHERE j.chat_id = chat.ROWID
+          AND ({read_ok})
+    """
+    exists_ok = f"""
+        EXISTS (
+          SELECT 1 FROM chat_message_join j
+          JOIN message m ON m.rowid = j.message_id
+          WHERE j.chat_id = chat.ROWID
+            AND ({read_ok})
+        )
+    """
+    before = conn.total_changes
+    if chat_rowids:
+        ph = ",".join("?" * len(chat_rowids))
+        conn.execute(
+            f"""
+            UPDATE chat SET last_read_message_timestamp = ({sub_select})
+            WHERE ROWID IN ({ph})
+              AND {exists_ok}
+            """,
+            tuple(chat_rowids),
+        )
+    else:
+        conn.execute(
+            f"""
+            UPDATE chat SET last_read_message_timestamp = ({sub_select})
+            WHERE {exists_ok}
+            """
+        )
+    conn.commit()
+    return conn.total_changes - before
 
 
 def _backfill_date_read(conn: sqlite3.Connection, cols: set[str], qread: str) -> int:
@@ -242,6 +551,29 @@ def main() -> int:
         action="store_true",
         help="Print unread breakdown from chat.db and exit (read-only; does not modify the DB).",
     )
+    parser.add_argument(
+        "--no-sync-chat-read",
+        action="store_true",
+        help="Do not update chat.last_read_message_timestamp (Dock badge may stay high).",
+    )
+    parser.add_argument(
+        "--fix-orphan-outbound-read",
+        action="store_true",
+        help=(
+            "Mark read on outbound messages that are is_read=0 and not linked to any chat "
+            "(chat_message_join). Safe cleanup for common sync leftovers; does not change "
+            "outbound rows that belong to a conversation thread."
+        ),
+    )
+    parser.add_argument(
+        "--fix-joined-outbound-read",
+        action="store_true",
+        help=(
+            "Mark read on your own messages that are still is_read=0 but are in a thread "
+            "(chat_message_join). Use when inbound unread is 0 but the Dock badge stays >0; "
+            "may change how read receipts / delivery appear for those sends."
+        ),
+    )
     args = parser.parse_args()
 
     if args.diagnose and args.live:
@@ -293,6 +625,20 @@ def main() -> int:
                 bf = _backfill_date_read(conn, cols, qread)
                 if bf and bf > 0:
                     print(f"Backfilled date_read on {bf} inbound row(s) already marked read.")
+            if (
+                not args.dry_run
+                and not args.no_sync_chat_read
+                and n_unread == 0
+            ):
+                n_sync = _sync_chat_last_read_timestamps(conn, qread, None)
+                if n_sync > 0:
+                    print(
+                        f"Synced chat.last_read_message_timestamp ({n_sync} chat row(s)) "
+                        "— Messages Dock badge often uses this.",
+                        flush=True,
+                    )
+            _run_orphan_outbound_fix(conn, cols, qread, args)
+            _run_joined_outbound_fix(conn, cols, qread, args)
             _report_leftover_unread(conn, cols, qread)
             return 0
 
@@ -313,6 +659,8 @@ def main() -> int:
 
         if args.dry_run or not rowids:
             if args.dry_run:
+                _run_orphan_outbound_fix(conn, cols, qread, args)
+                _run_joined_outbound_fix(conn, cols, qread, args)
                 _report_leftover_unread(conn, cols, qread)
             return 0
 
@@ -346,10 +694,21 @@ def main() -> int:
         bf = 0
         if "date_read" in cols:
             bf = _backfill_date_read(conn, cols, qread)
+        n_sync = 0
+        if not args.no_sync_chat_read:
+            chat_ids = _distinct_chat_ids_for_messages(conn, rowids)
+            n_sync = _sync_chat_last_read_timestamps(conn, qread, chat_ids)
         msg = f"Done — marked {len(rowids)} read"
         if bf and bf > 0:
             msg += f"; backfilled date_read on {bf} more row(s)"
+        if n_sync > 0:
+            msg += (
+                f"; synced chat read pointers ({n_sync} chat row(s)) "
+                "for Dock badge"
+            )
         print(msg + ".")
+        _run_orphan_outbound_fix(conn, cols, qread, args)
+        _run_joined_outbound_fix(conn, cols, qread, args)
         _report_leftover_unread(conn, cols, qread)
         return 0
     except sqlite3.Error as e:

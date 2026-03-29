@@ -20,6 +20,36 @@ def _msg(attrs: list[str]) -> Message:
 # --- policy=political (default): only POLITICAL is actioned for spam-like tags ---
 
 
+def test_political_unsubscribe_confirmation_purges_not_archives():
+    m = _msg(["LEGIT"])
+    m.text = "You have unsubscribed from alerts."
+    assert rules.evaluate(m) == ["purge"]
+
+
+def test_political_delayed_unsubscribe_phrases_purge():
+    for body in (
+        "You have been unsubscribed.",
+        "You've been unsubscribed from this service.",
+        "Unsubscribe confirmed. You will not receive further messages.",
+    ):
+        m = _msg(["UNKNOWN"])
+        m.text = body
+        assert rules.evaluate(m) == ["purge"], repr(body)
+
+
+def test_political_unsubscribe_phrase_in_both_subject_and_body_purges_once():
+    m = _msg(["LEGIT"])
+    m.subject = "You have been unsubscribed"
+    m.text = "You have been unsubscribed. Reply HELP for help."
+    assert rules.evaluate(m) == ["purge"]
+
+
+def test_political_unsubscribe_text_prevents_archive_even_if_political_tag():
+    m = _msg(["POLITICAL"])
+    m.text = "You have unsubscribed."
+    assert rules.evaluate(m) == ["purge"]
+
+
 def test_political_spam_alone_log_only():
     assert rules.evaluate(_msg(["SPAM", "UNKNOWN"])) == ["log_only"]
 
@@ -36,17 +66,13 @@ def test_political_spam_and_scam_log_only():
     assert rules.evaluate(_msg(["SPAM", "SCAM"])) == ["log_only"]
 
 
-def test_political_political_archive_stop_block_order_when_not_personal():
-    out = rules.evaluate(_msg(["POLITICAL"]))
-    assert out.index("archive") < out.index("send_stop") < out.index("block")
+def test_political_political_archives_only_when_not_personal():
+    assert rules.evaluate(_msg(["POLITICAL"])) == ["archive"]
     assert rules.evaluate(_msg(["POLITICAL", "PERSONAL"])) == []
 
 
 def test_political_political_with_spam_uses_political_rule():
-    out = rules.evaluate(_msg(["POLITICAL", "SPAM"]))
-    assert "archive" in out
-    assert "send_stop" in out
-    assert "block" in out
+    assert rules.evaluate(_msg(["POLITICAL", "SPAM"])) == ["archive"]
 
 
 def test_political_promo_log_only():
