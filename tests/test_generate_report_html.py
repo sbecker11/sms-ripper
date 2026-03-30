@@ -49,5 +49,22 @@ def test_generate_report_html_minimal_db(tmp_path: Path):
     assert "+15551234567" in text or "1555" in text
     assert "daemon-cycles/cycle_2026-03-01T12-00-00Z_99.html" in text
     assert "2026-03-01T12:00:00Z" in text
+    assert "ts-dual" in text
+    assert "2032-09-09" in text
+    assert "01:46:40 UTC" in text
+    assert "col-datetime" in text
+    assert "<br" in text
+    assert 'data-utc="2032-09-09T01:46:40Z"' in text
+    assert "sms-ripper-top-bar" in text
+    assert "sms-ripper-theme-bar" in text
+    assert "sms-ripper-tz-bar" in text
+    assert "smsRipperTheme" in text
+    assert "theme-toggle-btn" in text
+    assert "tz-toggle-btn" in text
     assert 'class="icon-nav"' in text
     assert "<svg " in text and "viewBox=\"0 0 16 16\"" in text
+    assert "smsRipperOpenArchiveFull" in text
+    assert "SMS_RIPPER_ARCHIVE_FULL" in text
+    assert "text-full-open" in text
+    assert ">full</th>" in text
+    assert '"1": "hello archive"' in text

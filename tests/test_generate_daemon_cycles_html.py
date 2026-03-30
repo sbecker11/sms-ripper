@@ -38,6 +38,13 @@ def test_generate_daemon_cycles_writes_index(tmp_path: Path):
     idx_text = idx.read_text(encoding="utf-8")
     assert "Recent cycles (newest first)" in idx_text
     assert "<code>9</code>" in idx_text
+    assert "ts-dual" in idx_text
+    assert "sms-ripper-tz-bar" in idx_text
+    assert "2026-03-29" in idx_text
+    assert "22:20:01 UTC" in idx_text
+    assert "22:20:14 UTC" in idx_text
+    assert "col-datetime" in idx_text
+    assert "<br" in idx_text
     cyc = list(out.glob("cycle_*.html"))
     assert len(cyc) == 1
     chtml = cyc[0].read_text(encoding="utf-8")
@@ -45,6 +52,14 @@ def test_generate_daemon_cycles_writes_index(tmp_path: Path):
     assert 'class="icon-nav"' in chtml
     assert "Daemon cycles index" in chtml
     assert "← Index" not in chtml
+    assert '<div class="cycle-times">' in chtml
+    assert "2026-03-29" in chtml
+    assert "22:20:01 UTC" in chtml
+    assert "22:20:14 UTC" in chtml
+    assert "<strong>start</strong>" in chtml and "<strong>end</strong>" in chtml
+    assert "sms-ripper-tz-bar" in chtml
+    assert "tz-toggle-btn" in chtml
+    assert 'data-utc="2026-03-29T22:20:01Z"' in chtml
 
 
 def test_max_cycles_limits_cycle_files(tmp_path: Path):

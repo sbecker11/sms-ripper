@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import html
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -23,6 +24,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from daemon_log_cycles import DaemonCycle, parse_daemon_log_text  # noqa: E402
+import html_tz_toggle  # noqa: E402
 
 DEFAULT_LOG = _REPO / "logs" / "daemon.log"
 DEFAULT_OUT = _REPO / "reports" / "daemon-cycles"
@@ -33,26 +35,97 @@ DEFAULT_MAX_CYCLES = 50
 _SVG_INDEX_NAV = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M2 2.5a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-11a.5.5 0 0 1-.5-.5zm0 4a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7a.5.5 0 0 1-.5-.5zm0 4a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 0 1h-11a.5.5 0 0 1-.5-.5zm0 4a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7a.5.5 0 0 1-.5-.5z"/></svg>"""
 
 _CSS = """
-:root { font-family: system-ui, sans-serif; background: #111; color: #e8e8e8; }
+:root { font-family: system-ui, sans-serif; }
+html { background: var(--sr-bg-page); color: var(--sr-fg); }
 body { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
-a { color: #8cb4ff; }
-a:visited { color: #c4a7e7; }
+a { color: var(--sr-link); }
+a:visited { color: var(--sr-link-visited); }
+a:hover { color: var(--sr-link-hover); }
 h1 { font-size: 1.25rem; }
-.meta { color: #888; font-size: 0.9rem; margin-bottom: 1rem; }
+.meta { color: var(--sr-fg-muted); font-size: 0.9rem; margin-bottom: 1rem; }
 table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-th, td { border: 1px solid #333; padding: 0.5rem 0.6rem; text-align: left; }
-th { background: #1e1e1e; }
-tr:nth-child(even) { background: #161616; }
-.badge-ok { color: #6c6; }
-.badge-err { color: #f66; }
-.badge-inc { color: #fa0; }
-pre { background: #0d0d0d; border: 1px solid #333; padding: 1rem; overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; }
-.hint { background: #1a1a2e; border: 1px solid #334; padding: 0.75rem 1rem; margin-top: 1.5rem; font-size: 0.85rem; }
+th, td { border: 1px solid var(--sr-border); padding: 0.5rem 0.6rem; text-align: left; }
+th { background: var(--sr-th-bg); }
+tr:nth-child(even) { background: var(--sr-tr-alt); }
+.badge-ok { color: var(--sr-badge-ok); }
+.badge-err { color: var(--sr-badge-err); }
+.badge-inc { color: var(--sr-badge-inc); }
+pre { background: var(--sr-pre-bg); border: 1px solid var(--sr-border); padding: 1rem; overflow-x: auto; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; }
+.cycle-times { margin-bottom: 0.75rem; }
+.cycle-times p.meta { margin: 0.25rem 0; }
+.hint { background: var(--sr-hint-bg); border: 1px solid var(--sr-hint-border); padding: 0.75rem 1rem; margin-top: 1.5rem; font-size: 0.85rem; }
 code { font-size: 0.9em; }
-a.icon-nav { color: #8cb4ff; text-decoration: none; display: inline-flex; align-items: center; }
-a.icon-nav:hover { color: #bcd4ff; }
+a.icon-nav { color: var(--sr-link); text-decoration: none; display: inline-flex; align-items: center; }
+a.icon-nav:hover { color: var(--sr-link-hover); }
 a.icon-nav svg { display: block; }
+td.ts-dual { font-size: 0.82rem; line-height: 1.35; vertical-align: top; word-break: break-word; }
 """
+
+
+def _parse_cycle_utc_ts(ts: str | None) -> datetime | None:
+    """Parse daemon log UTC timestamp ``YYYY-MM-DDTHH:MM:SSZ``."""
+    if not ts or not str(ts).strip() or str(ts).strip() == "—":
+        return None
+    s = str(ts).strip()
+    if not s.endswith("Z"):
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _fmt_utc_html(dt: datetime) -> str:
+    u = dt.astimezone(timezone.utc)
+    d = html.escape(u.strftime("%Y-%m-%d"))
+    t = html.escape(u.strftime("%H:%M:%S UTC"))
+    return f"{d}<br/>{t}"
+
+
+def _iso_z(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+
+
+def _cycle_times_header(start_ts: str, end_ts: str | None) -> str:
+    """Start/end with data-utc for the browser timezone toggle (default text is UTC)."""
+
+    def _line(label: str, raw: str | None, dt: datetime | None) -> str:
+        if dt:
+            iso = _iso_z(dt)
+            inner = (
+                f'<span class="dt-adjustable" data-utc="{html.escape(iso)}">'
+                f"{_fmt_utc_html(dt)}</span>"
+            )
+        else:
+            inner = html.escape((raw or "—").strip())
+        return f'<p class="meta"><strong>{label}</strong> · {inner}</p>'
+
+    s_dt = _parse_cycle_utc_ts(start_ts)
+    e_dt = _parse_cycle_utc_ts(end_ts) if end_ts else None
+    lines = [_line("start", start_ts, s_dt)]
+    if end_ts and str(end_ts).strip() not in ("", "—"):
+        lines.append(_line("end", end_ts, e_dt))
+    else:
+        lines.append('<p class="meta"><strong>end</strong> · —</p>')
+    return '<div class="cycle-times">\n' + "\n".join(lines) + "\n</div>"
+
+
+def _index_dual_time_cell(ts: str | None, *, href: str | None = None) -> str:
+    """Index cell: one adjustable instant (UTC by default); optional link on start column."""
+    if not ts or str(ts).strip() in ("", "—"):
+        return '<td class="ts-dual col-datetime">—</td>'
+    dt = _parse_cycle_utc_ts(ts)
+    if dt:
+        iso = _iso_z(dt)
+        inner = (
+            f'<span class="dt-adjustable" data-utc="{html.escape(iso)}">'
+            f"{_fmt_utc_html(dt)}</span>"
+        )
+    else:
+        inner = html.escape(str(ts).strip())
+    if href:
+        inner = f'<a href="{html.escape(href)}">{inner}</a>'
+    return f'<td class="ts-dual col-datetime">{inner}</td>'
 
 
 def _shell_page(
@@ -78,11 +151,17 @@ def _shell_page(
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{html.escape(title)}</title>
+  <style>{html_tz_toggle.THEME_CSS}</style>
   <style>{_CSS}</style>
+  <style>{html_tz_toggle.TOGGLE_CSS}</style>
+{html_tz_toggle.THEME_BOOTSTRAP_HEAD}
 </head>
 <body>
+{html_tz_toggle.TOGGLE_HTML}
 {back}
 {body_inner}
+{html_tz_toggle.THEME_JS}
+{html_tz_toggle.TOGGLE_JS}
 </body>
 </html>
 """
@@ -92,8 +171,8 @@ def _write_cycle_page(out_dir: Path, c: DaemonCycle, *, on_index: bool) -> str:
     fname = f"cycle_{c.file_slug()}.html"
     path = out_dir / fname
     body = f"""<h1>Daemon cycle</h1>
-<p class="meta">pid <code>{html.escape(c.pid)}</code> · start {html.escape(c.start_ts)}
- · end {html.escape(c.end_ts or "—")} · <span class="badge-{c.status[:3] if c.status != 'incomplete' else 'inc'}">{html.escape(c.status)}</span>
+{_cycle_times_header(c.start_ts, c.end_ts)}
+<p class="meta">pid <code>{html.escape(c.pid)}</code> · <span class="badge-{c.status[:3] if c.status != 'incomplete' else 'inc'}">{html.escape(c.status)}</span>
 {f" · failed step <code>{html.escape(c.error_step)}</code>" if c.error_step else ""}</p>
 <pre>{html.escape("".join(c.lines))}</pre>
 """
@@ -131,8 +210,8 @@ def _write_index(
         )
         rows.append(
             "<tr>"
-            f"<td><a href=\"{html.escape(fn)}\">{html.escape(c.start_ts)}</a></td>"
-            f"<td>{html.escape(c.end_ts or '—')}</td>"
+            f"{_index_dual_time_cell(c.start_ts, href=fn)}"
+            f"{_index_dual_time_cell(c.end_ts)}"
             f"<td><code>{html.escape(c.pid)}</code></td>"
             f"<td><span class=\"{st_class}\">{html.escape(c.status)}</span></td>"
             f"<td>{html.escape(c.error_step or '—')}</td>"
@@ -153,7 +232,7 @@ def _write_index(
 {omitted_note}
 <h2>Recent cycles (newest first)</h2>
 <table>
-<thead><tr><th>start</th><th>end</th><th>pid</th><th>status</th><th>error step</th></tr></thead>
+<thead><tr><th class="col-datetime" title="Instant in UTC; use UTC / Local buttons">start</th><th class="col-datetime" title="Same">end</th><th>pid</th><th>status</th><th>error step</th></tr></thead>
 <tbody>
 {rows_html}
 </tbody>
@@ -161,6 +240,8 @@ def _write_index(
 <div class="hint">
 Open via <code>file://</code> or <code>poe daemon-cycles-open</code>. Regenerated after each daemon cycle.
 Change the cap with <code>--max-cycles N</code> (default {DEFAULT_MAX_CYCLES}).
+Use <strong>Theme</strong> (top right) for light or dark colors (<code>localStorage</code> <code>smsRipperTheme</code>).
+Use <strong>UTC</strong> / <strong>Local</strong> for time display (<code>cookie</code> <code>smsRipperTzDisplay</code>).
 <br /><br />
 <a href="../index.html">Political archive report</a> — companion static page under <code>reports/</code>.
 </div>
