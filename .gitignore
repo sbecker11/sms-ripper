@@ -12,3 +12,4 @@ blocked_senders.txt
 backups/
 logs/*.log
 reports/*.html
+reports/daemon-cycles/*.html

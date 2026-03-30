@@ -8,6 +8,15 @@ The **LaunchAgent** `com.smsripper.periodic` runs [`scripts/daemon_cycle.py`](..
 4. **`bulk_mark_read.py --keep-unread 0 --fix-joined-outbound-read`**
 5. **`fix_messages_badge_stuck.sh`** — restart Notification Center / Dock so badges refresh
 6. **`generate_report_html.py`** — writes **`reports/index.html`** (static political-archive report). Failures are logged but do **not** fail the whole cycle.
+7. **`generate_daemon_cycles_html.py`** — parses **`logs/daemon.log`** into **`reports/daemon-cycles/index.html`** plus one page per **closed** cycle (see cycle markers below). Runs **after** the cycle-end line is written so the latest run appears in the index. A non-zero exit is logged as a warning only.
+
+**Cycle markers** (same `pid` on start and end):
+
+- `{ts} ======== cycle start pid=<PID> ========`
+- `{ts} ======== cycle end pid=<PID> OK ========`
+- `{ts} ======== cycle end pid=<PID> ERROR after <step> ========`
+
+Older logs may only have `cycle end OK` / `cycle end ERROR after …` without `pid=`; those are still paired with the **current** open cycle when parsed.
 
 **Tradeoff:** Messages is quit every cycle that reaches step 2; the main step uses the **Claude API** (cost). Use a longer interval or uninstall if that is too disruptive.
 
@@ -80,6 +89,9 @@ All commands are run from the **repository root** (same directory as `pyproject.
 | **Run one cycle now** (foreground) | `poe daemon-cycle-once` | Same steps as the agent; logs to `logs/daemon.log`. Does not change the schedule. |
 | **Stop / uninstall** | `poe daemon-uninstall` | Unloads job and removes `~/Library/LaunchAgents/com.smsripper.periodic.plist`. |
 | **Status** | `poe daemon-status` | Whether the job is loaded; prints last lines of `logs/daemon.log` if present. |
+| **Daemon log (tail)** | `poe daemon-log` | Prints the **last ~200 lines** of `logs/daemon.log` (full stream follow: `tail -f logs/daemon.log` in a terminal). |
+| **Regenerate cycle HTML** | `poe daemon-cycles-generate` | Rebuilds **`reports/daemon-cycles/`** from `logs/daemon.log` (also runs automatically at end of each daemon cycle). Index lists the **50** newest cycles by default; override with `python scripts/generate_daemon_cycles_html.py --max-cycles N`. |
+| **Open cycle index** | `poe daemon-cycles-open` or **`poe daemon-cycle-index`** | macOS **`open`** for **`reports/daemon-cycles/index.html`** (`file://` bookmark). |
 
 **After install:** the next cycle also runs **at login** (`RunAtLoad` in the plist).
 
@@ -90,9 +102,20 @@ All commands are run from the **repository root** (same directory as `pyproject.
 
 ---
 
-## 3. Static HTML report (`reports/index.html`)
+## 3. Daemon log browser (`reports/daemon-cycles/`)
 
-Each successful daemon cycle (step 6) regenerates a **self-contained** HTML file you can open in a browser.
+| What | Detail |
+|------|--------|
+| **Index** | **`reports/daemon-cycles/index.html`** — **latest cycle** (pid + start time + link) at the top; table of all cycles **newest first** |
+| **Per cycle** | **`reports/daemon-cycles/cycle_<start_ts>_<pid>.html`** — full log lines for that cycle only (timestamps in filenames use `-` instead of `:`) |
+| **Source** | Parsed from **`logs/daemon.log`**; old `cycle_*.html` files are removed and rewritten each run so the folder matches the log |
+| **Manual** | **`poe daemon-cycles-generate`** · **`poe daemon-cycles-open`** (macOS) |
+
+---
+
+## 4. Static HTML report (`reports/index.html`)
+
+Each daemon cycle (step 6) regenerates a **self-contained** political-archive HTML file you can open in a browser.
 
 | What | Detail |
 |------|--------|
@@ -105,7 +128,7 @@ The report lists **`POLITICAL_archive`** rows (newest first). It does **not** re
 
 ---
 
-## 4. Log files
+## 5. Log files
 
 | Log | Location | What it contains |
 |-----|----------|------------------|
@@ -119,7 +142,7 @@ The report lists **`POLITICAL_archive`** rows (newest first). It does **not** re
 
 ---
 
-## 5. Quick troubleshooting
+## 6. Quick troubleshooting
 
 | Symptom | What to try |
 |---------|-------------|

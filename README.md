@@ -89,12 +89,17 @@ Quick reference:
 | Run **one** cycle now (foreground) | `poe daemon-cycle-once` |
 | Stop / remove LaunchAgent | `poe daemon-uninstall` |
 | Loaded? + tail of log | `poe daemon-status` |
+| View end of daemon log (~200 lines) | `poe daemon-log` |
 | Regenerate static report (`reports/index.html`) | `poe report-generate` |
 | Open report in browser (macOS) | `poe report-open` |
+| Regenerate daemon-cycle HTML (index + per-cycle pages) | `poe daemon-cycles-generate` |
+| Open cycle index (macOS) | `poe daemon-cycles-open` or `poe daemon-cycle-index` |
 
 **Logs:** **`logs/daemon.log`** (cycle steps); **`sms_agent.log`** (`main.py` logging during the cycle). Details: [docs/DAEMON.md](docs/DAEMON.md) (section *Log files*).
 
-**Static report:** each daemon cycle regenerates **`reports/index.html`** (political archive table). **`poe report-generate`** to run manually; **`poe report-open`** to open in the default browser (macOS). See [docs/DAEMON.md](docs/DAEMON.md) (section *Static HTML report*).
+**Static report:** each daemon cycle regenerates **`reports/index.html`** (political archive). **`poe report-generate`** / **`poe report-open`**.
+
+**Daemon log browser:** **`reports/daemon-cycles/index.html`** lists each parsed cycle (latest first, link to full text). **`poe daemon-cycles-generate`** / **`poe daemon-cycles-open`**. See [docs/DAEMON.md](docs/DAEMON.md).
 
 ## How It Works
 
@@ -148,4 +153,7 @@ The **political** policy does not block or maintain `blocked_senders.txt`. If yo
 | `scripts/backup_chat_db.py` | Timestamped backup under `backups/` |
 | `docs/DAEMON.md` | LaunchAgent: FDA, start/stop, logs, HTML report, troubleshooting |
 | `reports/index.html` | Generated political-archive report (gitignored; created by daemon or `poe report-generate`) |
+| `reports/daemon-cycles/index.html` | Cycle index + links to per-cycle logs (gitignored; `poe daemon-cycles-generate`) |
+| `scripts/daemon_log_cycles.py` | Parse `daemon.log` into cycles (shared parser) |
+| `scripts/generate_daemon_cycles_html.py` | Write `reports/daemon-cycles/*.html` |
 | `logs/daemon.log` | Daemon cycle stdout/stderr (gitignored if `*.log`) |

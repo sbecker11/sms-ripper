@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-One daemon cycle for launchd: backup chat.db, quit Messages, political pass, badge sync.
+One daemon cycle for launchd: backup chat.db, quit Messages, political pass, badge sync,
+political HTML report, then rebuild reports/daemon-cycles/ from logs/daemon.log.
 
+Cycle start/end lines include the same pid=… for log parsing.
 Logs everything to logs/daemon.log. On failure, shows a macOS alert with the log path.
 Skips if a previous cycle still holds the lock (overlapping runs).
 """
@@ -16,19 +18,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _scripts_dir = Path(__file__).resolve().parent
+_REPO = Path(__file__).resolve().parent.parent
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 if str(_scripts_dir) not in sys.path:
     sys.path.insert(0, str(_scripts_dir))
 
+import archive  # noqa: E402
 import macos_fda_paths  # noqa: E402
-
-_REPO = Path(__file__).resolve().parent.parent
 _LOG = _REPO / "logs" / "daemon.log"
 _LOCK_PARENT = Path.home() / "Library" / "Caches" / "com.smsripper.periodic"
 _LOCK_PATH = _LOCK_PARENT / "cycle.lock"
 
 _REMEDY = (
     "Remedies: (1) logs/daemon.log — full stderr is there. "
-    "(2) Full Disk Access: poe daemon-fda-path — add Python.app AND bin/python3.11 (and sqlite3). "
+    "(2) Full Disk Access: poe daemon-fda-path — add /bin/cp (backup), Python.app, venv/bin/python, sqlite3. "
     "(3) Automation → Messages for quit/Dock scripts. "
     "(4) Quit Messages if stuck; wait for next cycle. "
     "(5) .env needs ANTHROPIC_API_KEY."
@@ -50,8 +54,9 @@ def _ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _log_line(msg: str, logf) -> None:
-    line = f"{_ts()} {msg}\n"
+def _log_line(msg: str, logf, *, ts: str | None = None) -> None:
+    stamp = _ts() if ts is None else ts
+    line = f"{stamp} {msg}\n"
     logf.write(line)
     logf.flush()
 
@@ -118,9 +123,15 @@ def main() -> int:
     env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:" + env.get("PATH", "")
 
     exit_code = 0
+    cycle_pid = os.getpid()
     try:
         with open(_LOG, "a", encoding="utf-8") as logf:
-            _log_line(f"======== cycle start pid={os.getpid()} ========", logf)
+            cycle_start_ts = _ts()
+            _log_line(
+                f"======== cycle start pid={cycle_pid} ========",
+                logf,
+                ts=cycle_start_ts,
+            )
 
             steps: list[tuple[str, list[str]]] = [
                 ("backup", [str(vpy), str(_REPO / "scripts" / "backup_chat_db.py")]),
@@ -158,7 +169,15 @@ def main() -> int:
             ]
 
             for step, cmd in steps:
-                code = _run_step(cmd, step, logf, env)
+                if step == "main_political":
+                    env[archive.ENV_DAEMON_CYCLE_START] = cycle_start_ts
+                    env[archive.ENV_DAEMON_CYCLE_PID] = str(cycle_pid)
+                try:
+                    code = _run_step(cmd, step, logf, env)
+                finally:
+                    if step == "main_political":
+                        env.pop(archive.ENV_DAEMON_CYCLE_START, None)
+                        env.pop(archive.ENV_DAEMON_CYCLE_PID, None)
                 if code != 0:
                     if step == "report_html":
                         _log_line(
@@ -172,12 +191,35 @@ def main() -> int:
                         + (f" {extra}" if extra else "")
                     )
                     _alert(f"Step failed: {step}", detail)
-                    _log_line(f"======== cycle end ERROR after {step} ========", logf)
+                    _log_line(
+                        f"======== cycle end pid={cycle_pid} ERROR after {step} ========",
+                        logf,
+                    )
                     exit_code = code
                     break
 
             if exit_code == 0:
-                _log_line("======== cycle end OK ========", logf)
+                _log_line(f"======== cycle end pid={cycle_pid} OK ========", logf)
+
+        r = subprocess.run(
+            [
+                str(vpy),
+                str(_REPO / "scripts" / "generate_daemon_cycles_html.py"),
+                "--max-cycles",
+                "50",
+            ],
+            cwd=str(_REPO),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode != 0:
+            with open(_LOG, "a", encoding="utf-8") as logf_warn:
+                msg = (r.stderr or r.stdout or "").strip()[:800]
+                _log_line(
+                    f"WARN generate_daemon_cycles_html exit={r.returncode} {msg}",
+                    logf_warn,
+                )
     finally:
         try:
             fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)

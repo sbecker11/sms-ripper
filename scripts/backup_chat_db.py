@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import shlex
 import shutil
@@ -20,6 +21,15 @@ if str(_scripts) not in sys.path:
 
 import config  # noqa: E402
 import macos_fda_paths  # noqa: E402
+
+
+def _is_tcc_or_access_denied(exc: BaseException) -> bool:
+    """True for macOS TCC 'Operation not permitted' and similar when opening protected paths."""
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError) and exc.errno is not None:
+        return exc.errno in (errno.EACCES, errno.EPERM, 1)
+    return False
 
 
 def _backup_cp(src: Path, dest: Path) -> tuple[bool, str]:
@@ -69,26 +79,37 @@ def main() -> int:
     # e.g. chat.db.UTC-2026-03-24T22-02-41Z.bak (colons → - for safe filenames)
     ts = now.strftime("%Y-%m-%dT%H-%M-%S") + "Z"
     dest = dest_dir / f"chat.db.UTC-{ts}.bak"
+
+    def _note_python_still_needs_fda(via: str) -> None:
+        print(
+            f"Note: backup succeeded via {via}; main.py still reads chat.db in Python — "
+            "add Python.app + venv/bin/python to Full Disk Access if later daemon steps fail.",
+            file=sys.stderr,
+        )
+
+    # On macOS, TCC often allows /bin/cp before the interpreter; try first to avoid a noisy traceback.
+    if sys.platform == "darwin":
+        ok_cp, _ = _backup_cp(src, dest)
+        if ok_cp and dest.is_file():
+            print(f"Backed up {src} -> {dest} (via /bin/cp)")
+            _note_python_still_needs_fda("/bin/cp")
+            return 0
+
     try:
         shutil.copy2(src, dest)
-    except PermissionError:
+    except OSError as e:
+        if not _is_tcc_or_access_denied(e):
+            print(f"Backup failed: {e}", file=sys.stderr)
+            return 1
         ok_cp, cp_err = _backup_cp(src, dest)
         if ok_cp and dest.is_file():
             print(f"Backed up {src} -> {dest} (via /bin/cp)")
-            print(
-                "Note: classification still uses Python to read chat.db — add Python.app + bin to FDA "
-                "or the next daemon step will fail.",
-                file=sys.stderr,
-            )
+            _note_python_still_needs_fda("/bin/cp")
             return 0
         ok_sql, sql_err = _backup_sqlite3(src, dest)
         if ok_sql and dest.is_file():
             print(f"Backed up {src} -> {dest} (via sqlite3 .backup)")
-            print(
-                "Note: classification still runs in Python — add Python paths to FDA "
-                "or the next daemon step will fail when reading chat.db.",
-                file=sys.stderr,
-            )
+            _note_python_still_needs_fda("sqlite3 .backup")
             return 0
         hint = "\n".join(macos_fda_paths.fda_path_lines(_REPO_ROOT))
         exe = sys.executable
@@ -101,7 +122,7 @@ def main() -> int:
         print(
             f"Permission denied reading {src}.{extra}\n"
             "Easiest fix: add /bin/cp to Full Disk Access (one system path). "
-            "You still need Python (Python.app + bin) for the agent to read chat.db.\n"
+            "You still need Python (Python.app + venv/bin/python) for the agent to read chat.db.\n"
             f"Resolved interpreter: {real}\n"
             f"Entry point: {exe}\n\n"
             f"{hint}\n\n"
@@ -110,6 +131,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+
     print(f"Backed up {src} -> {dest}")
     return 0
 

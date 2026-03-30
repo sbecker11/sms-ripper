@@ -9,6 +9,7 @@ first matching tag in message.attributes (classifier order).
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sqlite3
 from typing import Final
@@ -17,6 +18,10 @@ import config
 from reader import Message
 
 logger = logging.getLogger("sms_agent")
+
+# Set by scripts/daemon_cycle.py only for the main_political subprocess; read in archive_message.
+ENV_DAEMON_CYCLE_START = "SMS_RIPPER_DAEMON_CYCLE_START"
+ENV_DAEMON_CYCLE_PID = "SMS_RIPPER_DAEMON_CYCLE_PID"
 
 
 def _info(msg: str) -> None:
@@ -65,10 +70,34 @@ def _ensure_archive_table(conn: sqlite3.Connection, tag: str) -> str:
         (table,),
     ).fetchone()
     if row:
+        _ensure_daemon_cycle_columns(conn, table)
         return table
     conn.execute(f"CREATE TABLE {q} AS SELECT * FROM message WHERE 0=1")
     logger.info(f"[ARCHIVE] Created table {table} mirroring message schema")
+    _ensure_daemon_cycle_columns(conn, table)
     return table
+
+
+def _archive_columns_from_message(conn: sqlite3.Connection, archive_table: str) -> list[str]:
+    """Names of columns to copy from `message` into the archive table (handles extra archive-only cols)."""
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]*_archive", archive_table):
+        raise ValueError(f"Unexpected archive table name: {archive_table!r}")
+    msg_order = [r[1] for r in conn.execute("PRAGMA table_info(message)").fetchall()]
+    arch_names = {r[1] for r in conn.execute(f"PRAGMA table_info({archive_table})").fetchall()}
+    return [c for c in msg_order if c in arch_names]
+
+
+def _ensure_daemon_cycle_columns(conn: sqlite3.Connection, table: str) -> None:
+    """Add optional columns used to link archive rows to reports/daemon-cycles/cycle_*.html."""
+    qtbl = _quote_ident(table)
+    for col, typ in (("daemon_cycle_start", "TEXT"), ("daemon_cycle_pid", "TEXT")):
+        qcol = _quote_ident(col)
+        has = conn.execute(
+            "SELECT 1 FROM pragma_table_info(?) WHERE name = ? LIMIT 1",
+            (table, col),
+        ).fetchone()
+        if not has:
+            conn.execute(f"ALTER TABLE {qtbl} ADD COLUMN {qcol} {typ}")
 
 
 def _register_chat_db_trigger_stubs(conn: sqlite3.Connection) -> None:
@@ -188,10 +217,23 @@ def archive_message(message: Message) -> bool:
                 f"[ARCHIVE] rowid {message.rowid} already in {tbl}; copying skipped, removing live row"
             )
         else:
+            cols = _archive_columns_from_message(conn, tbl)
+            if not cols:
+                logger.error("[ARCHIVE] No overlapping columns between message and %s", tbl)
+                return False
+            quoted = ", ".join(_quote_ident(c) for c in cols)
             conn.execute(
-                f"INSERT INTO {qtbl} SELECT * FROM message WHERE rowid = ?",
+                f"INSERT INTO {qtbl} ({quoted}) SELECT {quoted} FROM message WHERE rowid = ?",
                 (message.rowid,),
             )
+            c_start = os.environ.get(ENV_DAEMON_CYCLE_START)
+            c_pid = os.environ.get(ENV_DAEMON_CYCLE_PID)
+            if c_start and c_pid:
+                conn.execute(
+                    f"UPDATE {qtbl} SET daemon_cycle_start = ?, daemon_cycle_pid = ? "
+                    "WHERE rowid = ?",
+                    (c_start, c_pid, message.rowid),
+                )
         _delete_message_row(conn, message.rowid)
         conn.commit()
         _info(

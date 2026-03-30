@@ -73,6 +73,8 @@ def test_archive_message_no_tag_returns_false():
 
 def test_archive_message_moves_row(monkeypatch: pytest.MonkeyPatch, chat_db_path: Path):
     monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.setenv(archive.ENV_DAEMON_CYCLE_START, "2026-01-02T03:04:05Z")
+    monkeypatch.setenv(archive.ENV_DAEMON_CYCLE_PID, "424242")
     ns = 1_700_000_000_000_000_000
     mid = populate_chat_db(chat_db_path, date_ns=ns, text="political text")
 
@@ -106,6 +108,10 @@ def test_archive_message_moves_row(monkeypatch: pytest.MonkeyPatch, chat_db_path
             ]
             == "political text"
         )
+        assert conn.execute(
+            "SELECT daemon_cycle_start, daemon_cycle_pid FROM POLITICAL_archive WHERE rowid = ?",
+            (mid,),
+        ).fetchone() == ("2026-01-02T03:04:05Z", "424242")
         assert (
             conn.execute(
                 "SELECT COUNT(*) FROM chat_message_join WHERE message_id = ?", (mid,)

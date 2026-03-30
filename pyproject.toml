@@ -60,6 +60,7 @@ daemon-install = "bash scripts/install_sms_ripper_launchagent.sh install"
 daemon-install-15m = "bash scripts/install_sms_ripper_launchagent.sh install 900"
 daemon-uninstall = "bash scripts/install_sms_ripper_launchagent.sh uninstall"
 daemon-status = "bash scripts/install_sms_ripper_launchagent.sh status"
+daemon-log = "tail -n 200 logs/daemon.log"
 daemon-cycle-once = "python scripts/daemon_cycle.py"
 daemon-fda-path = "python scripts/print_fda_python.py"
 fda-assist = "python scripts/fda_assist.py"
@@ -68,6 +69,10 @@ verify-fda = "python scripts/verify_fda.py"
 # Static HTML report of POLITICAL_archive (daemon runs this at end of each cycle)
 report-generate = "python scripts/generate_report_html.py"
 report-open = "open reports/index.html"
+daemon-cycles-generate = "python scripts/generate_daemon_cycles_html.py --max-cycles 50"
+daemon-cycles-open = "open reports/daemon-cycles/index.html"
+# Alias: opens the same cycle index as daemon-cycles-open
+daemon-cycle-index = "open reports/daemon-cycles/index.html"
 # chat.db read-only reports (macOS + Full Disk Access; see docs/QUERIES.md)
 query-total = "bash scripts/run_chat_query.sh queries/total_messages.sql"
 query-text = "bash scripts/run_chat_query.sh queries/text_messages_no_tapback.sql"
