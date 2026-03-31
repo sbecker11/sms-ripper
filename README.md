@@ -1,9 +1,11 @@
 # SMS-ripper Agent
 
-An AI-powered iMessage agent that reads recent messages, classifies them using Claude,
-applies configurable rules, and takes action. By default, **only messages tagged POLITICAL**
-(non-personal) are actioned (**archive** only — copied to `POLITICAL_archive` and removed from the live `message` table so they disappear from Messages); other tags (e.g. SPAM alone)
-typically **log only** unless you add more rules in `rules.py`.
+An AI-powered iMessage pipeline for **LLM-driven message categorization** plus **human-in-the-loop
+tag refinement**. It reads recent messages, classifies them with Claude into multi-label tags,
+applies rules, and lets you review/regenerate `classifier_attributes` from a local training UI
+using human hints and keyword guidance.
+The workflow also includes a generated archive report (`reports/index.html`); by default, rules
+currently action qualifying non-personal `POLITICAL` messages by archiving them.
 
 ## Screenshots
 
