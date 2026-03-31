@@ -4,6 +4,13 @@ All notable changes to this project are documented here. Entries use **UTC** tim
 
 ---
 
+## 2026-03-30T23:45:00Z UTC
+
+- **Classifier tag semantics:** Enforced `UNKNOWN` exclusivity: if `UNKNOWN` is present, all other tags are dropped in `classifier.classify_message()` and `classifier.decode_classifier_blob()` (including legacy archived JSON).
+- **Archive index filtering:** `generate_report_html.py` now forces `data-archive-types="UNKNOWN"` when both archived `subject` and `text` are empty (matches training UI), preventing POLITICAL filter from matching truly empty rows even if legacy `classifier_attributes` still contains POLITICAL/SPAM.
+
+---
+
 ## 2026-03-30T23:00:00Z UTC
 
 - **Changelog & index footer:** Added root **`CHANGELOG.md`** (UTC section headings `## …Z UTC`, newest first). The political archive **index** (`generate_report_html.py`, static and training server) includes a footer link to **`CHANGELOG.md`** plus **latest entry** text parsed from the top section heading (same string as after `## `). **`archive_training_server`** serves **`GET /CHANGELOG.md`**. README links to the changelog.

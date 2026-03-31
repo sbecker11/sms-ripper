@@ -252,7 +252,10 @@ def decode_classifier_blob(raw: object) -> tuple[list[str], dict[str, float]]:
         return [], {}
     if isinstance(v, list):
         attrs = [str(x).strip().upper() for x in v if x is not None and str(x).strip()]
-        return attrs, {a: 1.0 for a in attrs}
+        weights = {a: 1.0 for a in attrs}
+        if "UNKNOWN" in {a.upper() for a in attrs}:
+            return ["UNKNOWN"], {"UNKNOWN": 1.0}
+        return attrs, weights
     if isinstance(v, dict):
         raw_attrs = v.get("attributes")
         raw_w = v.get("weights")
@@ -272,6 +275,8 @@ def decode_classifier_blob(raw: object) -> tuple[list[str], dict[str, float]]:
                     pass
         for a in attrs:
             weights.setdefault(a, 1.0)
+        if "UNKNOWN" in {a.upper() for a in attrs}:
+            return ["UNKNOWN"], {"UNKNOWN": weights.get("UNKNOWN", 1.0)}
         return attrs, weights
     return [], {}
 
@@ -285,6 +290,23 @@ def encode_classifier_blob(attributes: list[str], weights: dict[str, float]) -> 
     return json.dumps({"attributes": attrs_u, "weights": w}, ensure_ascii=False)
 
 
+def _has_no_usable_plaintext(text: str) -> bool:
+    """
+    True when there is nothing real to classify: empty/whitespace, or only
+    :data:`reader.RICH_ONLY_PLACEHOLDER` line(s) with no subject or other line.
+    """
+    if not (text or "").strip():
+        return True
+    ph = reader.RICH_ONLY_PLACEHOLDER.strip()
+    for ln in (text or "").splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        if s != ph:
+            return False
+    return True
+
+
 def classify_message(
     text: str, *, human_guidance: str | None = None
 ) -> ClassificationResult:
@@ -295,18 +317,11 @@ def classify_message(
     When ``human_guidance`` is set, it is appended to the user message so reviewers can steer
     the model while keeping the same JSON output contract.
 
-    Empty subject+body (no non-whitespace text) returns UNKNOWN without calling the API unless
+    Empty subject+body (no non-whitespace text), or body that is only the rich-content
+    placeholder with no subject line, returns UNKNOWN without calling the API unless
     ``human_guidance`` is non-empty so training / reviewer hints can still be classified.
     """
-    if text == reader.RICH_ONLY_PLACEHOLDER:
-        # No plaintext in chat.db; API would see the same prompt for every row. Assume bulk SMS.
-        return ClassificationResult(
-            ["POLITICAL", "SPAM"],
-            "attributedBody only in chat.db — heuristic POLITICAL+SPAM (no API)",
-            {"POLITICAL": 1.0, "SPAM": 1.0},
-        )
-
-    if not (text or "").strip():
+    if _has_no_usable_plaintext(text):
         if not (human_guidance or "").strip():
             return ClassificationResult(
                 ["UNKNOWN"],
@@ -362,12 +377,16 @@ def classify_message(
         parsed = json.loads(raw_text.strip())
     except json.JSONDecodeError:
         u_attrs, u_w = _merge_political_keywords(text, ["UNKNOWN"], {"UNKNOWN": 1.0})
+        if "UNKNOWN" in {a.upper() for a in u_attrs}:
+            return ClassificationResult(["UNKNOWN"], f"Could not parse response: {raw_text[:200]}", {"UNKNOWN": u_w.get("UNKNOWN", 1.0)})
         return ClassificationResult(u_attrs, f"Could not parse response: {raw_text[:200]}", u_w)
 
     try:
         model = ClassificationPayload.model_validate(parsed)
     except ValidationError:
         u_attrs, u_w = _merge_political_keywords(text, ["UNKNOWN"], {"UNKNOWN": 1.0})
+        if "UNKNOWN" in {a.upper() for a in u_attrs}:
+            return ClassificationResult(["UNKNOWN"], f"Could not parse response: {raw_text[:200]}", {"UNKNOWN": u_w.get("UNKNOWN", 1.0)})
         return ClassificationResult(u_attrs, f"Could not parse response: {raw_text[:200]}", u_w)
 
     attrs_upper = [a.upper() for a in model.attributes]
@@ -377,5 +396,10 @@ def classify_message(
         attrs_upper,
     )
     attrs_upper, weights = _merge_political_keywords(text, attrs_upper, weights)
+
+    # Enforce UNKNOWN exclusivity: if the classifier assigns UNKNOWN, drop all other tags.
+    if "UNKNOWN" in {a.upper() for a in attrs_upper}:
+        attrs_upper = ["UNKNOWN"]
+        weights = {"UNKNOWN": weights.get("UNKNOWN", 1.0)}
     active = _active_attributes(attrs_upper, weights, had_explicit)
     return ClassificationResult(active, model.reason, weights)

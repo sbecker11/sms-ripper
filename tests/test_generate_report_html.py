@@ -82,6 +82,8 @@ def test_generate_report_html_minimal_db(tmp_path: Path):
     assert "Archive type" in text
     assert "POLITICAL" in text and "SPAM" in text
     assert '<option value="UNKNOWN">UNKNOWN</option>' in text
+    # Empty subject+body: index filter tags match training UI (UNKNOWN only), not stale JSON.
+    assert 'data-archive-types="UNKNOWN"' in text
     assert 'data-archive-no-plaintext="1"' in text
     assert 'getAttribute("data-archive-no-plaintext")' in text
     assert "archive-row" in text
@@ -163,6 +165,28 @@ def test_build_training_server_index_html(tmp_path: Path):
     assert "footer-changelog" in html_doc
     assert "latest entry" in html_doc and " UTC" in html_doc
     assert "Latest 10 archived messages (newest first)" in html_doc
+
+
+def test_index_empty_text_with_subject_keeps_classifier_tags(tmp_path: Path):
+    """MMS subject line alone is usable plaintext; do not force UNKNOWN like empty subject+body."""
+    db = tmp_path / "chat.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE handle (rowid INTEGER PRIMARY KEY, id TEXT)")
+    conn.execute("INSERT INTO handle (rowid, id) VALUES (1, '+1')")
+    conn.execute(
+        "CREATE TABLE POLITICAL_archive ("
+        "rowid INTEGER PRIMARY KEY, date INTEGER, text TEXT, subject TEXT, handle_id INTEGER, "
+        "classifier_attributes TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO POLITICAL_archive (rowid, date, text, subject, handle_id, classifier_attributes) "
+        "VALUES (1, 1000000000000000000, '', 'Shipped', 1, '[\"POLITICAL\"]')"
+    )
+    conn.commit()
+    total, rows = grh._fetch_rows(conn, 10)
+    conn.close()
+    assert total == 1
+    assert rows[0]["archive_types"] == ["POLITICAL"]
 
 
 def test_datetime_cell_inner_dash_becomes_open_full_button():

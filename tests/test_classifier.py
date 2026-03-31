@@ -126,13 +126,26 @@ def test_classify_message_missing_api_key():
             classifier.classify_message("hi")
 
 
-def test_classify_message_rich_placeholder_skips_http():
+def test_classify_message_rich_placeholder_only_skips_http_unknown():
+    """Rich-only placeholder with no subject line is not POLITICAL+SPAM; same as empty body."""
     with patch.object(classifier.urllib.request, "urlopen") as urlopen_mock:
         res = classifier.classify_message(reader.RICH_ONLY_PLACEHOLDER)
     urlopen_mock.assert_not_called()
-    assert res.attributes == ["POLITICAL", "SPAM"]
-    assert "no API" in res.reason
-    assert res.weights["POLITICAL"] == 1.0 and res.weights["SPAM"] == 1.0
+    assert res.attributes == ["UNKNOWN"]
+    assert "no subject or body" in res.reason
+    assert res.weights == {"UNKNOWN": 1.0}
+
+
+def test_classify_message_subject_plus_rich_placeholder_calls_api(monkeypatch):
+    """MMS subject + placeholder body still has usable plaintext for the model."""
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["LEGIT"], "reason": "ok"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    combined = f"Shipped\n{reader.RICH_ONLY_PLACEHOLDER}"
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)) as m:
+        res = classifier.classify_message(combined)
+    m.assert_called_once()
+    assert res.attributes == ["LEGIT"]
 
 
 def test_classify_message_empty_text_returns_unknown_skips_http():
@@ -205,7 +218,7 @@ def test_classify_message_adds_political_for_housegop_domain(monkeypatch):
     with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
         res = classifier.classify_message("Complete here: https://housegop.info/lDlQyl8T")
 
-    assert "POLITICAL" in res.attributes
+    assert res.attributes == ["UNKNOWN"]
 
 
 def test_classify_message_adds_political_for_speaker_johnson(monkeypatch):
@@ -229,7 +242,7 @@ def test_classify_message_adds_political_for_noisy_voter_id(monkeypatch):
     with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
         res = classifier.classify_message(noisy)
 
-    assert "POLITICAL" in res.attributes
+    assert res.attributes == ["UNKNOWN"]
 
 
 def test_classify_message_adds_political_for_noisy_trump_brackets(monkeypatch):
@@ -254,7 +267,17 @@ def test_classify_message_adds_political_for_gop_bracket_noise(monkeypatch):
     with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
         res = classifier.classify_message(noisy)
 
-    assert "POLITICAL" in res.attributes
+    assert res.attributes == ["UNKNOWN"]
+
+
+def test_classify_message_malformed_inner_json_unknown_exclusive(monkeypatch):
+    """If the model response is malformed, political keyword merge may occur — UNKNOWN must remain exclusive."""
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = "not json {"
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("News from the White House")
+    assert res.attributes == ["UNKNOWN"]
 
 
 def test_classify_message_weights_drop_below_threshold(monkeypatch):

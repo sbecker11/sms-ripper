@@ -233,6 +233,26 @@ def _parse_classifier_attributes(raw: object) -> list[str]:
     return attrs
 
 
+def _archive_table_columns(conn: sqlite3.Connection) -> set[str]:
+    return {
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM pragma_table_info(?)",
+            (TABLE,),
+        )
+    }
+
+
+def _no_plaintext_for_index(text: object, subject: object) -> bool:
+    """
+    Match ``archive_tag_training.build_message_state`` / training UI: no classifiable
+    subject or body (both empty after strip).
+    """
+    t = ("" if text is None else str(text)).strip()
+    s = ("" if subject is None else str(subject)).strip()
+    return not t and not s
+
+
 def _build_html(
     *,
     generated_at_iso: str,
@@ -430,7 +450,7 @@ window.smsRipperOpenArchiveFull = function (rowid) {
         for r in rows:
             types = [str(t).strip() for t in (r.get("archive_types") or []) if str(t).strip()]
             tags_attr = html.escape(" ".join(types))
-            no_plain = not str(r.get("text") or "").strip()
+            no_plain = _no_plaintext_for_index(r.get("text"), r.get("subject"))
             no_plain_attr = ' data-archive-no-plaintext="1"' if no_plain else ""
             re_at = str(r.get("training_regenerated_at") or "").strip()
             train_attr = html.escape(re_at, quote=True)
@@ -657,12 +677,16 @@ def _fetch_rows(conn: sqlite3.Connection, limit: int) -> tuple[int, list[dict[st
         return 0, []
 
     total = int(conn.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0])
+    cols = _archive_table_columns(conn)
+    has_subject = "subject" in cols
     has_cycle = _archive_has_cycle_columns(conn)
     has_classifier = _archive_has_classifier_attributes(conn)
     cycle_sql_p = ""
     cycle_sql_bare = ""
     classifier_sql_p = ""
     classifier_sql_bare = ""
+    subject_sql_p = ", p.subject AS subject" if has_subject else ""
+    subject_sql_bare = ", subject" if has_subject else ""
     if has_cycle:
         cycle_sql_p = ", p.daemon_cycle_start AS daemon_cycle_start, p.daemon_cycle_pid AS daemon_cycle_pid"
         cycle_sql_bare = ", daemon_cycle_start, daemon_cycle_pid"
@@ -671,7 +695,7 @@ def _fetch_rows(conn: sqlite3.Connection, limit: int) -> tuple[int, list[dict[st
         classifier_sql_bare = ", classifier_attributes"
     # Join handle when both tables exist
     q = f"""
-    SELECT p.rowid AS rowid, p.date AS date, p.text AS text, h.id AS handle{cycle_sql_p}{classifier_sql_p}
+    SELECT p.rowid AS rowid, p.date AS date, p.text AS text{subject_sql_p}, h.id AS handle{cycle_sql_p}{classifier_sql_p}
     FROM {TABLE} AS p
     LEFT JOIN handle AS h ON p.handle_id = h.rowid
     ORDER BY p.date DESC
@@ -681,7 +705,7 @@ def _fetch_rows(conn: sqlite3.Connection, limit: int) -> tuple[int, list[dict[st
         cur = conn.execute(q, (limit,))
     except sqlite3.Error:
         q2 = f"""
-        SELECT rowid, date, text, NULL AS handle{cycle_sql_bare}{classifier_sql_bare}
+        SELECT rowid, date, text{subject_sql_bare}, NULL AS handle{cycle_sql_bare}{classifier_sql_bare}
         FROM {TABLE} ORDER BY date DESC LIMIT ?
         """
         cur = conn.execute(q2, (limit,))
@@ -691,9 +715,15 @@ def _fetch_rows(conn: sqlite3.Connection, limit: int) -> tuple[int, list[dict[st
             "rowid": row[0],
             "date": row[1],
             "text": row[2],
-            "handle": row[3],
         }
-        idx = 4
+        idx = 3
+        if has_subject:
+            base["subject"] = row[idx]
+            idx += 1
+        else:
+            base["subject"] = None
+        base["handle"] = row[idx]
+        idx += 1
         if has_cycle:
             base["daemon_cycle_start"] = row[idx]
             base["daemon_cycle_pid"] = row[idx + 1]
@@ -702,7 +732,14 @@ def _fetch_rows(conn: sqlite3.Connection, limit: int) -> tuple[int, list[dict[st
             base["daemon_cycle_start"] = None
             base["daemon_cycle_pid"] = None
         if has_classifier:
-            base["archive_types"] = _parse_classifier_attributes(row[idx])
+            parsed = _parse_classifier_attributes(row[idx])
+            idx += 1
+            if _no_plaintext_for_index(base["text"], base.get("subject")):
+                # Match training UI: empty subject+body → effective tags UNKNOWN only (ignore
+                # stale POLITICAL/SPAM from legacy rich-only heuristic in stored JSON).
+                base["archive_types"] = ["UNKNOWN"]
+            else:
+                base["archive_types"] = parsed
         else:
             base["archive_types"] = []
         out.append(base)
