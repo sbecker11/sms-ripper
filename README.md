@@ -1,5 +1,7 @@
 # SMS-ripper Agent
 
+_An AI agent that rips out unwanted SMS messages._
+
 An AI-powered iMessage pipeline for **LLM-driven message categorization** plus **human-in-the-loop
 tag refinement**. It reads recent messages, classifies them with Claude into multi-label tags,
 applies rules, and lets you review/regenerate `classifier_attributes` from a local training UI
