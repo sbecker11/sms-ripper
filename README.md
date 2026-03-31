@@ -1,9 +1,20 @@
-# SMS Agent
+# SMS-ripper Agent
 
 An AI-powered iMessage agent that reads recent messages, classifies them using Claude,
 applies configurable rules, and takes action. By default, **only messages tagged POLITICAL**
 (non-personal) are actioned (**archive** only — copied to `POLITICAL_archive` and removed from the live `message` table so they disappear from Messages); other tags (e.g. SPAM alone)
 typically **log only** unless you add more rules in `rules.py`.
+
+## Screenshots
+
+![Message Archive Report screenshot](readme-message-archive-report.png)
+
+![Archive message training screenshot](readme-archive-message-training.png)
+
+Captions:
+
+- Message Archive Report with archive-type filtering, retrain status, and quick access to full-message review.
+- Archive message training page for reviewing LLM tags, applying human overrides, and regenerating classifier tags.
 
 ## Setup
 
@@ -20,10 +31,12 @@ See [docs/SETUP.md](docs/SETUP.md) for full setup. Configuration uses **Pydantic
 ## Permissions Required
 
 In **System Settings → Privacy & Security → Full Disk Access**:
+
 - Add your terminal app (Terminal, iTerm2, Warp)
 - Add Cursor (if running from the IDE)
 
 In **System Settings → Privacy & Security → Accessibility**:
+
 - Add your terminal app (required for AppleScript UI automation)
 
 **Optional — ghost unread rows:** If the sidebar shows unread threads that say **“No Conversation Selected”** until you click twice, you can try the experimental UI scrub (requires Accessibility): `poe messages-scrub-ui -- --rows 30` (see `scripts/messages_scrub_sidebar.py --help`). This is **fragile** across macOS versions; database cleanup (`political-all`, `bulk_mark_read`) remains the reliable approach.
@@ -74,29 +87,29 @@ If you care about **pulling campaign / PAC SMS out of the live thread**, treat *
 
 ## Background daemon (launchd)
 
-Scheduled runs (default every **15 minutes** after login) perform the same *kind* of work as **`poe political-all`** plus **badge cleanup**. **Full setup** — Full Disk Access paths, **start / one cycle / stop**, and **log files** — is documented here:
+Scheduled runs (default every **15 minutes** after login) perform the same _kind_ of work as **`poe political-all`** plus **badge cleanup**. **Full setup** — Full Disk Access paths, **start / one cycle / stop**, and **log files** — is documented here:
 
 **[docs/DAEMON.md](docs/DAEMON.md)**
 
 Quick reference:
 
-| Task | Command |
-|------|---------|
-| Guided Full Disk Access (clipboard walkthrough) | `poe fda-assist` |
-| Print FDA paths to add | `poe daemon-fda-path` |
-| Verify `chat.db` access (Python, `/bin/cp`, `sqlite3`) | `poe verify-fda` |
-| Install / enable (15 min) | `poe daemon-install-15m` |
-| Run **one** cycle now (foreground) | `poe daemon-cycle-once` |
-| Stop / remove LaunchAgent | `poe daemon-uninstall` |
-| Loaded? + tail of log | `poe daemon-status` |
-| View end of daemon log (~200 lines) | `poe daemon-log` |
-| Regenerate static report (`reports/index.html`) | `poe report-generate` |
-| Open report in browser (macOS) | `poe report-open` |
-| Archive tag training UI (loopback; quit Messages first) | `poe archive-training-server` |
-| Regenerate daemon-cycle HTML (index + per-cycle pages) | `poe daemon-cycles-generate` |
-| Open cycle index (macOS) | `poe daemon-cycles-open` or `poe daemon-cycle-index` |
+| Task                                                    | Command                                              |
+| ------------------------------------------------------- | ---------------------------------------------------- |
+| Guided Full Disk Access (clipboard walkthrough)         | `poe fda-assist`                                     |
+| Print FDA paths to add                                  | `poe daemon-fda-path`                                |
+| Verify `chat.db` access (Python, `/bin/cp`, `sqlite3`)  | `poe verify-fda`                                     |
+| Install / enable (15 min)                               | `poe daemon-install-15m`                             |
+| Run **one** cycle now (foreground)                      | `poe daemon-cycle-once`                              |
+| Stop / remove LaunchAgent                               | `poe daemon-uninstall`                               |
+| Loaded? + tail of log                                   | `poe daemon-status`                                  |
+| View end of daemon log (~200 lines)                     | `poe daemon-log`                                     |
+| Regenerate static report (`reports/index.html`)         | `poe report-generate`                                |
+| Open report in browser (macOS)                          | `poe report-open`                                    |
+| Archive tag training UI (loopback; quit Messages first) | `poe archive-training-server`                        |
+| Regenerate daemon-cycle HTML (index + per-cycle pages)  | `poe daemon-cycles-generate`                         |
+| Open cycle index (macOS)                                | `poe daemon-cycles-open` or `poe daemon-cycle-index` |
 
-**Logs:** **`logs/daemon.log`** (cycle steps); **`sms_agent.log`** (`main.py` logging during the cycle). Details: [docs/DAEMON.md](docs/DAEMON.md) (section *Log files*).
+**Logs:** **`logs/daemon.log`** (cycle steps); **`sms_agent.log`** (`main.py` logging during the cycle). Details: [docs/DAEMON.md](docs/DAEMON.md) (section _Log files_).
 
 **Static report:** each daemon cycle regenerates **`reports/index.html`** (political archive). **`poe report-generate`** / **`poe report-open`**.
 
@@ -121,6 +134,7 @@ chat.db → reader.py → classifier.py (Claude API) → rules.py → actions.py
 ## Customizing Rules
 
 Edit `rules.py` to add or modify rules. Each rule has:
+
 - `condition`: a lambda that takes the attributes list and returns True/False
 - `actions`: list of `send_stop`, `block`, `delete`, `archive`, `log_only`
 
@@ -146,26 +160,26 @@ Recent changes (UTC-timestamped entries, newest first): **[CHANGELOG.md](CHANGEL
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `main.py` | Orchestrator / CLI entry point |
-| `reader.py` | chat.db reader, Message dataclass |
-| `classifier.py` | Claude API classification |
-| `archive_tag_training.py` | SQLite helpers + regenerate flow for human-in-the-loop tag review |
-| `rules.py` | Rules engine |
-| `archive.py` | Copy rows to `<TAG>_archive`, delete live `message` row |
-| `actions.py` | AppleScript send/block/delete; dispatches `archive` |
-| `config.py` | Configuration |
-| `blocked_senders.txt` | Legacy / spam-policy block append target (optional; not used to skip senders in `main.py`) |
-| `backups/` | `chat.db` copies from `poe backup-db` (gitignored) |
-| `sms_agent.log` | Run log (auto-created) |
-| `scripts/dry_run_recent.py` | Preview tags + rules + execution-ordered actions (read-only DB) |
-| `scripts/backup_chat_db.py` | Timestamped backup under `backups/` |
-| `docs/DAEMON.md` | LaunchAgent: FDA, start/stop, logs, HTML report, troubleshooting |
-| `reports/index.html` | Generated political-archive report (gitignored; created by daemon or `poe report-generate`) |
-| `reports/daemon-cycles/index.html` | Cycle index + links to per-cycle logs (gitignored; `poe daemon-cycles-generate`) |
-| `scripts/daemon_log_cycles.py` | Parse `daemon.log` into cycles (shared parser) |
-| `scripts/generate_daemon_cycles_html.py` | Write `reports/daemon-cycles/*.html` |
-| `scripts/archive_training_server.py` | Loopback HTTP UI to edit human tag hints and re-run the classifier on an archive row |
-| `CHANGELOG.md` | Timestamped summary of recent project changes (UTC) |
-| `logs/daemon.log` | Daemon cycle stdout/stderr (gitignored if `*.log`) |
+| File                                     | Purpose                                                                                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `main.py`                                | Orchestrator / CLI entry point                                                              |
+| `reader.py`                              | chat.db reader, Message dataclass                                                           |
+| `classifier.py`                          | Claude API classification                                                                   |
+| `archive_tag_training.py`                | SQLite helpers + regenerate flow for human-in-the-loop tag review                           |
+| `rules.py`                               | Rules engine                                                                                |
+| `archive.py`                             | Copy rows to `<TAG>_archive`, delete live `message` row                                     |
+| `actions.py`                             | AppleScript send/block/delete; dispatches `archive`                                         |
+| `config.py`                              | Configuration                                                                               |
+| `blocked_senders.txt`                    | Legacy / spam-policy block append target (optional; not used to skip senders in `main.py`)  |
+| `backups/`                               | `chat.db` copies from `poe backup-db` (gitignored)                                          |
+| `sms_agent.log`                          | Run log (auto-created)                                                                      |
+| `scripts/dry_run_recent.py`              | Preview tags + rules + execution-ordered actions (read-only DB)                             |
+| `scripts/backup_chat_db.py`              | Timestamped backup under `backups/`                                                         |
+| `docs/DAEMON.md`                         | LaunchAgent: FDA, start/stop, logs, HTML report, troubleshooting                            |
+| `reports/index.html`                     | Generated political-archive report (gitignored; created by daemon or `poe report-generate`) |
+| `reports/daemon-cycles/index.html`       | Cycle index + links to per-cycle logs (gitignored; `poe daemon-cycles-generate`)            |
+| `scripts/daemon_log_cycles.py`           | Parse `daemon.log` into cycles (shared parser)                                              |
+| `scripts/generate_daemon_cycles_html.py` | Write `reports/daemon-cycles/*.html`                                                        |
+| `scripts/archive_training_server.py`     | Loopback HTTP UI to edit human tag hints and re-run the classifier on an archive row        |
+| `CHANGELOG.md`                           | Timestamped summary of recent project changes (UTC)                                         |
+| `logs/daemon.log`                        | Daemon cycle stdout/stderr (gitignored if `*.log`)                                          |
