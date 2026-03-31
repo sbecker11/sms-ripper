@@ -243,7 +243,7 @@ Change the cap with <code>--max-cycles N</code> (default {DEFAULT_MAX_CYCLES}).
 Use <strong>Theme</strong> (top right) for light or dark colors (<code>localStorage</code> <code>smsRipperTheme</code>).
 Use <strong>UTC</strong> / <strong>Local</strong> for time display (<code>cookie</code> <code>smsRipperTzDisplay</code>).
 <br /><br />
-<a href="../index.html">Political archive report</a> — companion static page under <code>reports/</code>.
+<a href="../index.html">Message Archive Report</a> — companion static page under <code>reports/</code>.
 </div>
 """
     (out_dir / "index.html").write_text(
@@ -276,7 +276,7 @@ def main() -> int:
         stub = _shell_page(
             "sms-ripper — daemon cycles",
             f"""<p>No log file yet: <code>{html.escape(str(log_path))}</code></p>
-<p class="meta"><a href="../index.html">← Political archive report</a></p>
+<p class="meta"><a href="../index.html">← Message Archive Report</a></p>
 <div class="hint">After the first daemon cycle, this page lists recent runs. Regenerated automatically at cycle end.</div>""",
             back_href=None,
             back_kind=None,

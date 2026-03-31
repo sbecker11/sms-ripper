@@ -1,11 +1,13 @@
 """Tests for archive.first_archival_tag and archive_message."""
 
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 import archive
+import classifier
 import config
 from reader import Message
 from tests.conftest import populate_chat_db
@@ -112,11 +114,54 @@ def test_archive_message_moves_row(monkeypatch: pytest.MonkeyPatch, chat_db_path
             "SELECT daemon_cycle_start, daemon_cycle_pid FROM POLITICAL_archive WHERE rowid = ?",
             (mid,),
         ).fetchone() == ("2026-01-02T03:04:05Z", "424242")
+        raw_attrs = conn.execute(
+            f"SELECT {archive.CLASSIFIER_ATTRIBUTES_COLUMN} FROM POLITICAL_archive WHERE rowid = ?",
+            (mid,),
+        ).fetchone()[0]
+        assert json.loads(raw_attrs) == json.loads(
+            classifier.encode_classifier_blob(["POLITICAL"], {"POLITICAL": 1.0})
+        )
         assert (
             conn.execute(
                 "SELECT COUNT(*) FROM chat_message_join WHERE message_id = ?", (mid,)
             ).fetchone()[0]
             == 0
+        )
+    finally:
+        conn.close()
+
+
+def test_archive_message_stores_all_classifier_attributes(
+    monkeypatch: pytest.MonkeyPatch, chat_db_path: Path
+):
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.delenv(archive.ENV_DAEMON_CYCLE_START, raising=False)
+    monkeypatch.delenv(archive.ENV_DAEMON_CYCLE_PID, raising=False)
+    ns = 1_700_000_000_000_000_002
+    mid = populate_chat_db(chat_db_path, date_ns=ns, text="bulk")
+
+    attrs = ["POLITICAL", "SPAM", "UNKNOWN"]
+    msg = Message(
+        rowid=mid,
+        chat_id=1,
+        chat_identifier="+15551234567",
+        sender="+15551234567",
+        text="bulk",
+        is_from_me=False,
+        date=None,
+        attributes=attrs,
+        attribute_weights={a: 1.0 for a in attrs},
+    )
+    assert archive.archive_message(msg) is True
+
+    conn = sqlite3.connect(chat_db_path)
+    try:
+        raw = conn.execute(
+            f"SELECT {archive.CLASSIFIER_ATTRIBUTES_COLUMN} FROM POLITICAL_archive WHERE rowid = ?",
+            (mid,),
+        ).fetchone()[0]
+        assert json.loads(raw) == json.loads(
+            classifier.encode_classifier_blob(attrs, {a: 1.0 for a in attrs})
         )
     finally:
         conn.close()

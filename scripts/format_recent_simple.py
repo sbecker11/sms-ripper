@@ -85,8 +85,8 @@ def terminal_width() -> int:
 
 def classify_tags_line(text: str) -> str:
     """Space-separated tags from classifier (same labels rules.py uses)."""
-    attrs, _reason = classifier.classify_message(text)
-    return " ".join(attrs) if attrs else "UNKNOWN"
+    res = classifier.classify_message(text)
+    return " ".join(res.attributes) if res.attributes else "UNKNOWN"
 
 
 def main() -> int:

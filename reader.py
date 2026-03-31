@@ -44,6 +44,7 @@ class Message(BaseModel):
     is_from_me: bool
     date: datetime | None = None
     attributes: list[str] = Field(default_factory=list)
+    attribute_weights: dict[str, float] = Field(default_factory=dict)
     actions_taken: list[str] = Field(default_factory=list)
 
     def combined_plaintext(self) -> str:

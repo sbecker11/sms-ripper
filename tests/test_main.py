@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import classifier as clf
 import config
 from reader import Message
 
@@ -83,7 +84,7 @@ def test_process_once_log_only_branch(main_mod, monkeypatch):
     monkeypatch.setattr(
         main_mod.classifier,
         "classify_message",
-        lambda t: (["PROMO"], "promo"),
+        lambda t: clf.ClassificationResult(["PROMO"], "promo", {"PROMO": 1.0}),
     )
     monkeypatch.setattr(
         main_mod.rules,
@@ -102,7 +103,7 @@ def test_process_once_executes_actions_success(main_mod, monkeypatch):
     monkeypatch.setattr(
         main_mod.classifier,
         "classify_message",
-        lambda t: (["POLITICAL"], "political"),
+        lambda t: clf.ClassificationResult(["POLITICAL"], "political", {"POLITICAL": 1.0}),
     )
     monkeypatch.setattr(
         main_mod.actions,
@@ -132,7 +133,7 @@ def test_process_once_messages_quit_guard_once_for_batch(main_mod, monkeypatch):
     monkeypatch.setattr(
         main_mod.classifier,
         "classify_message",
-        lambda t: (["POLITICAL"], ""),
+        lambda t: clf.ClassificationResult(["POLITICAL"], "", {"POLITICAL": 1.0}),
     )
     monkeypatch.setattr(
         main_mod.actions,
@@ -152,7 +153,7 @@ def test_process_once_execute_all_fail(main_mod, monkeypatch):
     monkeypatch.setattr(
         main_mod.classifier,
         "classify_message",
-        lambda t: (["POLITICAL"], ""),
+        lambda t: clf.ClassificationResult(["POLITICAL"], "", {"POLITICAL": 1.0}),
     )
     monkeypatch.setattr(
         main_mod.actions,

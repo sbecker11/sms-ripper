@@ -124,10 +124,13 @@ def process_once(
                 stats["errors"] += 1
                 continue
 
-            attrs, reason = raw_class
-            msg.attributes = attrs
+            res = raw_class
+            msg.attributes = res.attributes
+            msg.attribute_weights = res.weights
             if not quiet:
-                logger.info(f"  → Attributes: {attrs} | Reason: {reason}")
+                logger.info(
+                    f"  → Attributes: {res.attributes} | Weights: {res.weights} | Reason: {res.reason}"
+                )
 
             # 4. Evaluate rules → get actions
             action_list, matched_rule_names = rules.evaluate_detailed(msg, policy=policy)

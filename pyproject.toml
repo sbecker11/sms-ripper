@@ -69,6 +69,12 @@ verify-fda = "python scripts/verify_fda.py"
 # Static HTML report of POLITICAL_archive (daemon runs this at end of each cycle)
 report-generate = "python scripts/generate_report_html.py"
 report-open = "open reports/index.html"
+# Local loopback UI to review / re-classify POLITICAL_archive rows (human-in-the-loop); see README
+archive-training-server = "python scripts/archive_training_server.py"
+# Re-run classifier on POLITICAL_archive rows; updates classifier_attributes JSON (needs ANTHROPIC_API_KEY)
+reclassify-archive-tags = "python scripts/reclassify_archive_tags.py"
+# List archive rows with empty/unknown tags; optional --suggest to compare with current classifier
+review-untagged-archive = "python scripts/review_untagged_archive.py"
 daemon-cycles-generate = "python scripts/generate_daemon_cycles_html.py --max-cycles 50"
 daemon-cycles-open = "open reports/daemon-cycles/index.html"
 # Alias: opens the same cycle index as daemon-cycles-open

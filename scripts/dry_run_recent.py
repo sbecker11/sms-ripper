@@ -121,8 +121,9 @@ def classify_and_evaluate(
         msg.attributes = ["UNKNOWN"]
     else:
         try:
-            attrs, _reason = classifier.classify_message(msg.combined_plaintext())
-            msg.attributes = attrs
+            res = classifier.classify_message(msg.combined_plaintext())
+            msg.attributes = res.attributes
+            msg.attribute_weights = res.weights
         except Exception:
             msg.attributes = ["UNKNOWN"]
     action_list, matched_names = rules.evaluate_detailed(msg, policy=policy)
@@ -241,12 +242,22 @@ def main() -> int:
             tag_lines = ["Tags: UNKNOWN  (not classified — rules use [UNKNOWN])"]
         else:
             try:
-                attrs, reason = classifier.classify_message(msg.combined_plaintext())
-                msg.attributes = attrs
-                rshort = (reason or "").replace("\n", " ").strip()
+                res = classifier.classify_message(msg.combined_plaintext())
+                msg.attributes = res.attributes
+                msg.attribute_weights = res.weights
+                rshort = (res.reason or "").replace("\n", " ").strip()
                 if len(rshort) > 120:
                     rshort = rshort[:117] + "..."
-                tag_lines = [f"Tags: {' '.join(attrs)}", f"Classifier: {rshort}"]
+                wshort = (
+                    " ".join(f"{k}:{v:.2f}" for k, v in sorted(res.weights.items()))
+                    if res.weights
+                    else ""
+                )
+                tag_lines = [
+                    f"Tags: {' '.join(res.attributes)}",
+                    f"Weights: {wshort}" if wshort else "Weights: (none)",
+                    f"Classifier: {rshort}",
+                ]
             except Exception as e:
                 msg.attributes = ["UNKNOWN"]
                 tag_lines = [f"Tags: (classification error: {e})"]

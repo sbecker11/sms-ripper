@@ -92,12 +92,17 @@ Quick reference:
 | View end of daemon log (~200 lines) | `poe daemon-log` |
 | Regenerate static report (`reports/index.html`) | `poe report-generate` |
 | Open report in browser (macOS) | `poe report-open` |
+| Archive tag training UI (loopback; quit Messages first) | `poe archive-training-server` |
 | Regenerate daemon-cycle HTML (index + per-cycle pages) | `poe daemon-cycles-generate` |
 | Open cycle index (macOS) | `poe daemon-cycles-open` or `poe daemon-cycle-index` |
 
 **Logs:** **`logs/daemon.log`** (cycle steps); **`sms_agent.log`** (`main.py` logging during the cycle). Details: [docs/DAEMON.md](docs/DAEMON.md) (section *Log files*).
 
 **Static report:** each daemon cycle regenerates **`reports/index.html`** (political archive). **`poe report-generate`** / **`poe report-open`**.
+
+**Classification details:** [docs/CLASSIFICATION.md](docs/CLASSIFICATION.md) — multi-label tags, optional per-tag weights, archive JSON, and training column **W**.
+
+**Archive tag training (local UI):** With Messages quit and **`ANTHROPIC_API_KEY`** set, run **`poe archive-training-server`** (or **`python scripts/archive_training_server.py`**). It binds to **loopback only** (default **http://127.0.0.1:8765**) and **opens Google Chrome** to that URL on macOS (**`--no-browser`** to skip). **`GET /`** serves the same **political archive index** as **`reports/index.html`** (newest first, **`--limit`** rows), plus a **last retrain** column (UTC from the last training-UI **Apply**) and a **Retrained (training UI)** filter so you can avoid redoing the same row. The **full** icon opens the tag editor at **`/message/<rowid>`**. **Apply** re-runs the classifier with your hints, updates **`POLITICAL_archive.classifier_attributes`** (plus small SQLite training tables), then **closes** the message tab and reloads the index tab when you opened it from there. **Done** closes **without** re-running the classifier (same index reload when opened from the index). For a **file://** report that jumps to the server, regenerate with **`--archive-training-url http://127.0.0.1:8765`** while the server is running.
 
 **Daemon log browser:** **`reports/daemon-cycles/index.html`** lists each parsed cycle (latest first, link to full text). **`poe daemon-cycles-generate`** / **`poe daemon-cycles-open`**. See [docs/DAEMON.md](docs/DAEMON.md).
 
@@ -108,7 +113,7 @@ chat.db → reader.py → classifier.py (Claude API) → rules.py → actions.py
 ```
 
 1. **reader.py** — reads `~/Library/Messages/chat.db` in read-only mode
-2. **classifier.py** — sends each message to Claude Sonnet, gets back attributes:
+2. **classifier.py** — sends each message to Claude Sonnet, gets back **multi-label** tags plus optional **per-tag weights** in **[0, 1]**; rules see the tag list after an optional **confidence threshold** (see [docs/CLASSIFICATION.md](docs/CLASSIFICATION.md)). Allowed tags:
    `SPAM | STOP | SCAM | POLITICAL | PROMO | LEGIT | PERSONAL | UNKNOWN`
 3. **rules.py** — maps attribute combinations to actions (merge order when multiple rules match)
 4. **actions.py** — executes: `send_stop`, `block`, `delete`, `archive`, `log_only`. **Execution order** is normalized so **`archive` always runs before `delete`** even if rule merge order differs.
@@ -135,6 +140,10 @@ Rule(
 
 The **political** policy does not block or maintain `blocked_senders.txt`. If you run **`main.py --policy spam`**, the spam rules may still call **`block`** (append to `blocked_senders.txt`); that file is **not** read by `main.py` anymore, so it does not affect who gets classified or archived.
 
+## Changelog
+
+Recent changes (UTC-timestamped entries, newest first): **[CHANGELOG.md](CHANGELOG.md)**.
+
 ## Files
 
 | File | Purpose |
@@ -142,6 +151,7 @@ The **political** policy does not block or maintain `blocked_senders.txt`. If yo
 | `main.py` | Orchestrator / CLI entry point |
 | `reader.py` | chat.db reader, Message dataclass |
 | `classifier.py` | Claude API classification |
+| `archive_tag_training.py` | SQLite helpers + regenerate flow for human-in-the-loop tag review |
 | `rules.py` | Rules engine |
 | `archive.py` | Copy rows to `<TAG>_archive`, delete live `message` row |
 | `actions.py` | AppleScript send/block/delete; dispatches `archive` |
@@ -156,4 +166,6 @@ The **political** policy does not block or maintain `blocked_senders.txt`. If yo
 | `reports/daemon-cycles/index.html` | Cycle index + links to per-cycle logs (gitignored; `poe daemon-cycles-generate`) |
 | `scripts/daemon_log_cycles.py` | Parse `daemon.log` into cycles (shared parser) |
 | `scripts/generate_daemon_cycles_html.py` | Write `reports/daemon-cycles/*.html` |
+| `scripts/archive_training_server.py` | Loopback HTTP UI to edit human tag hints and re-run the classifier on an archive row |
+| `CHANGELOG.md` | Timestamped summary of recent project changes (UTC) |
 | `logs/daemon.log` | Daemon cycle stdout/stderr (gitignored if `*.log`) |

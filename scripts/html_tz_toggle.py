@@ -82,7 +82,19 @@ th.col-datetime, td.col-datetime {
 }
 """
 
-# Fixed top-right: theme row + time row.
+# Shared page title: Message Archive Report + Archive message training (keep in sync).
+HERO_H1_CSS = """
+h1 {
+  font-size: 2em;
+  font-weight: 700;
+  line-height: 1.15;
+  margin: 0 0 0.75rem;
+  color: var(--sr-fg);
+  font-family: inherit;
+}
+"""
+
+# Fixed top-right: theme + time zone on one row.
 TOGGLE_CSS = """
 #sms-ripper-top-bar {
   position: fixed;
@@ -90,8 +102,10 @@ TOGGLE_CSS = """
   right: 0.65rem;
   z-index: 10000;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 0.4rem;
 }
 #sms-ripper-theme-bar,
