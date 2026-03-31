@@ -325,14 +325,99 @@ def _page_html(rowid: int) -> str:
     }} catch (e) {{ return String(ns); }}
   }}
 
+  function fmtNsISO(ns) {{
+    if (ns == null || ns === "") return "";
+    var n = Number(ns);
+    if (!isFinite(n)) return String(ns);
+    // Apple message.date stores nanoseconds since 2001-01-01 00:00:00 UTC.
+    var sec = Math.floor(n / 1000000000) + 978307200;
+    try {{
+      return new Date(sec * 1000).toISOString();
+    }} catch (e) {{ return String(ns); }}
+  }}
+
+  function getCookie(name) {{
+    var prefix = name + "=";
+    var chunks = document.cookie.split(";");
+    for (var i = 0; i < chunks.length; i++) {{
+      var p = chunks[i].replace(/^\\s+/, "");
+      if (p.indexOf(prefix) === 0) return decodeURIComponent(p.substring(prefix.length));
+    }}
+    return null;
+  }}
+
+  function pad2(n) {{ return (n < 10 ? "0" : "") + n; }}
+
+  function tzAbbrevShort(d) {{
+    var abbr = "";
+    try {{
+      var parts = new Intl.DateTimeFormat(undefined, {{ timeZoneName: "short" }}).formatToParts(d);
+      for (var j = 0; j < parts.length; j++) {{
+        if (parts[j].type === "timeZoneName") {{
+          abbr = parts[j].value;
+          break;
+        }}
+      }}
+    }} catch (e) {{
+      return "";
+    }}
+    if (!abbr) return "";
+    if (/GMT|UTC/i.test(abbr) && /[+-]\\d/.test(abbr)) return "";
+    if (/[+-]\\d/.test(abbr)) return "";
+    return abbr;
+  }}
+
+  function fmtUTC(d) {{
+    var y = d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate());
+    var t =
+      pad2(d.getUTCHours()) +
+      ":" +
+      pad2(d.getUTCMinutes()) +
+      ":" +
+      pad2(d.getUTCSeconds()) +
+      " UTC";
+    return y + "<br>" + t;
+  }}
+
+  function fmtLocal(d) {{
+    try {{
+      var dateLine = new Intl.DateTimeFormat(undefined, {{ year: "numeric", month: "short", day: "numeric" }}).format(d);
+      var timeLine = new Intl.DateTimeFormat(undefined, {{ hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }}).format(d);
+      var abbr = tzAbbrevShort(d);
+      return dateLine + "<br>" + timeLine + (abbr ? " " + abbr : "");
+    }} catch (e) {{
+      return String(d);
+    }}
+  }}
+
+  function applyTzToDtAdjustables(mode) {{
+    var els = document.querySelectorAll("[data-utc]");
+    for (var i = 0; i < els.length; i++) {{
+      var el = els[i];
+      var raw = el.getAttribute("data-utc");
+      if (!raw) continue;
+      var d = new Date(raw);
+      if (isNaN(d.getTime())) continue;
+      el.innerHTML = mode === "local" ? fmtLocal(d) : fmtUTC(d);
+    }}
+  }}
+
   function render(data) {{
     showErr("");
+    var tzMode = (getCookie("smsRipperTzDisplay") || "utc").trim().toLowerCase();
+    if (tzMode !== "local" && tzMode !== "utc") tzMode = "utc";
+    var dateIso = fmtNsISO(data.date_ns);
     metaEl.innerHTML =
       "<span><strong>rowid</strong> " + data.rowid + "</span>" +
-      "<span><strong>date</strong> " + fmtNs(data.date_ns) + "</span>" +
+      "<span><strong>date</strong> " +
+        "<span class='dt-adjustable' data-utc='" + dateIso + "'>" + fmtNs(data.date_ns) + "</span>" +
+      "</span>" +
       "<span><strong>handle</strong> " + (data.handle || "—") + "</span>" +
       "<span><strong>snapshot</strong> " + (data.generated_at_iso || "—") + "</span>" +
       "<span><strong>last retrain</strong> " + (data.last_training_regenerate_at || "—") + "</span>";
+    // Ensure date display matches current UTC/Local cookie even if the shared TOGGLE_JS
+    // ran before this page’s async `render()` injected the date element.
+    if (dateIso) applyTzToDtAdjustables(tzMode);
     var subj = (data.subject || "").trim();
     var txt = data.text != null ? String(data.text) : "";
     bodyEl.innerHTML = (subj ? "<div class=\\"subj\\">" + escapeHtml(subj) + "</div>" : "") +
