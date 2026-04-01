@@ -2,8 +2,13 @@
 """
 Rules engine: maps message attributes → list of actions to take.
 
+**Policies** (string switches in code, not tags in the catalog): ``political`` and ``spam``
+are rule-set names only. **Tags** (e.g. ``education``, ``spam``, ``religion``) are whatever
+keys you define in ``tag_catalog``; the conditions below use this repo’s **default** seed names
+as examples.
+
 Policies (see evaluate_detailed policy=):
-  political — purge unsubscribe confirmations (subject or body text); archive POLITICAL (non-personal); no STOP/block.
+  political — purge unsubscribe confirmations (subject or body text); archive default tag ``education`` when non-personal; no STOP/block.
   spam      — send_stop / block / delete for SPAM or STOP; SCAM rule; no political rule (run second).
 
 Actions:
@@ -18,9 +23,14 @@ Actions:
 from dataclasses import dataclass
 from typing import Callable, Literal
 
+import tag_catalog
 from reader import Message
 
 Policy = Literal["political", "spam"]
+
+
+def _tags(m: Message) -> set[str]:
+    return {tag_catalog.normalize_tag(a) for a in (m.attributes or []) if str(a).strip()}
 
 
 def text_looks_like_unsubscribe_confirmation(m: Message) -> bool:
@@ -77,63 +87,63 @@ RULES_POLITICAL: list[Rule] = [
     ),
     Rule(
         name="political",
-        description="Political messaging — copy to POLITICAL_archive and remove from live message table",
-        condition=lambda m: "POLITICAL" in m.attributes
-        and "PERSONAL" not in m.attributes
+        description="Political messaging — copy to message_tags_archive and remove from live message table",
+        condition=lambda m: "education" in _tags(m)
+        and "personal" not in _tags(m)
         and not text_looks_like_unsubscribe_confirmation(m),
         actions=["archive"],
     ),
     Rule(
         name="promo_only",
         description="Promotional but not spam — log only",
-        condition=lambda m: "PROMO" in m.attributes and "SPAM" not in m.attributes,
+        condition=lambda m: "promo" in _tags(m) and "spam" not in _tags(m),
         actions=["log_only"],
     ),
     Rule(
         name="legit",
         description="Legitimate message — no action",
-        condition=lambda m: "LEGIT" in m.attributes,
+        condition=lambda m: "legit" in _tags(m),
         actions=[],
     ),
     Rule(
         name="personal",
         description="Personal message — no action",
-        condition=lambda m: "PERSONAL" in m.attributes,
+        condition=lambda m: "personal" in _tags(m),
         actions=[],
     ),
 ]
 
-# --- spam second: no political rule (POLITICAL rows should already be archived) ---
+# --- spam second: no political rule (``education`` rows should already be archived) ---
 
 RULES_SPAM: list[Rule] = [
     Rule(
         name="spam_stop",
         description="Message is SPAM and/or STOP — reply STOP, block, delete",
-        condition=lambda m: bool({"SPAM", "STOP"} & set(m.attributes)),
+        condition=lambda m: bool({"spam", "stop"} & _tags(m)),
         actions=["send_stop", "block", "delete"],
     ),
     Rule(
         name="scam",
         description="Message is a SCAM — block and delete without replying",
-        condition=lambda m: "SCAM" in m.attributes,
+        condition=lambda m: "scam" in _tags(m),
         actions=["block", "delete"],
     ),
     Rule(
         name="promo_only",
         description="Promotional but not spam — log only",
-        condition=lambda m: "PROMO" in m.attributes and "SPAM" not in m.attributes,
+        condition=lambda m: "promo" in _tags(m) and "spam" not in _tags(m),
         actions=["log_only"],
     ),
     Rule(
         name="legit",
         description="Legitimate message — no action",
-        condition=lambda m: "LEGIT" in m.attributes,
+        condition=lambda m: "legit" in _tags(m),
         actions=[],
     ),
     Rule(
         name="personal",
         description="Personal message — no action",
-        condition=lambda m: "PERSONAL" in m.attributes,
+        condition=lambda m: "personal" in _tags(m),
         actions=[],
     ),
 ]

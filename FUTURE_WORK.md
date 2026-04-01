@@ -12,7 +12,7 @@ Rough engineering-time notes for planning. Not commitments; actual time depends 
 
 **Review untagged / weakly tagged rows:** run `python scripts/review_untagged_archive.py` (or `poe review-untagged-archive`). Add `--include-unknown` to include `["UNKNOWN"]`-only rows; add `--suggest` to compare stored tags with the current classifier (needs API key). Use `--csv` / `--output file.csv` for spreadsheets.
 
-**Goal:** Store one or more tags per archived row (e.g. JSON `["POLITICAL","SPAM"]` in a new `POLITICAL_archive` column), populated from `Message.attributes` at archive time. Apple’s `message` table does not carry classifier tags; today they exist only in memory during a run.
+**Goal:** Store one or more tags per archived row (e.g. JSON `["education","spam"]` in a new `message_tags_archive` column), populated from `Message.attributes` at archive time. Apple’s `message` table does not carry classifier tags; today they exist only in memory during a run.
 
 **Typical implementation**
 
@@ -43,7 +43,7 @@ Rough engineering-time notes for planning. Not commitments; actual time depends 
 
 ## Report UI: dropdown to filter rows by tag
 
-**Goal:** Static `reports/index.html` with a `<select>` (e.g. “All”, “POLITICAL”, “SPAM”, …) and client-side show/hide of table rows based on persisted tags.
+**Goal:** Static `reports/index.html` with a `<select>` (e.g. “All”, “education”, “spam”, …) and client-side show/hide of table rows based on persisted tags.
 
 **Dependency:** Tags must be **present in the generated HTML** (or embedded JSON), which requires **persistence** as above unless the report is regenerated from another source that still has attributes.
 
@@ -55,7 +55,7 @@ Rough engineering-time notes for planning. Not commitments; actual time depends 
 
 ## Earlier scoping note (multi-tag + filter, full picture)
 
-- **Classifier already returns** multiple `attributes` on `Message` in Python; the gap is **persistence** on `POLITICAL_archive` for the static report.
+- **Classifier already returns** multiple `attributes` on `Message` in Python; the gap is **persistence** on `message_tags_archive` for the static report.
 - **UI-only filter** is easy **if** tags are already in the page data.
 - **End-to-end “multiple tags + filter”** is **moderate** overall: one schema/write path in archive, then report/UI.
 

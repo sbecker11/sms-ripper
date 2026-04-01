@@ -56,7 +56,7 @@ The runtime agent uses the Python standard library plus `osascript` on the syste
 
 ## 4. Anthropic API key
 
-The classifier needs an **Anthropic API key**, supplied **only** via the project’s `.env` file. Shell `export` and other OS environment variables are **not** read for configuration (so the key does not live in your global environment). For how tags and **per-tag weights** work in the pipeline and in `POLITICAL_archive`, see [CLASSIFICATION.md](CLASSIFICATION.md).
+The classifier needs an **Anthropic API key**, supplied **only** via the project’s `.env` file. Shell `export` and other OS environment variables are **not** read for configuration (so the key does not live in your global environment). For how tags and **per-tag weights** work in the pipeline and in `message_tags_archive`, see [CLASSIFICATION.md](CLASSIFICATION.md).
 
 Create or manage keys in the Anthropic Console: [https://console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
 
@@ -214,4 +214,4 @@ More detail: [Poe the Poet — Installation](https://poethepoet.natn.io/installa
 
 ---
 
-For automated tests and coverage, see [TESTING.md](TESTING.md).
+For automated tests and coverage, see [TESTING.md](TESTING.md). For tag catalog, policies, archive, and training UI in one place, see [FRAMEWORK.md](FRAMEWORK.md).

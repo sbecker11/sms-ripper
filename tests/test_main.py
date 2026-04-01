@@ -103,7 +103,7 @@ def test_process_once_executes_actions_success(main_mod, monkeypatch):
     monkeypatch.setattr(
         main_mod.classifier,
         "classify_message",
-        lambda t: clf.ClassificationResult(["POLITICAL"], "political", {"POLITICAL": 1.0}),
+        lambda t: clf.ClassificationResult(["education"], "political", {"education": 1.0}),
     )
     monkeypatch.setattr(
         main_mod.actions,
@@ -133,7 +133,7 @@ def test_process_once_messages_quit_guard_once_for_batch(main_mod, monkeypatch):
     monkeypatch.setattr(
         main_mod.classifier,
         "classify_message",
-        lambda t: clf.ClassificationResult(["POLITICAL"], "", {"POLITICAL": 1.0}),
+        lambda t: clf.ClassificationResult(["education"], "", {"education": 1.0}),
     )
     monkeypatch.setattr(
         main_mod.actions,
@@ -153,7 +153,7 @@ def test_process_once_execute_all_fail(main_mod, monkeypatch):
     monkeypatch.setattr(
         main_mod.classifier,
         "classify_message",
-        lambda t: clf.ClassificationResult(["POLITICAL"], "", {"POLITICAL": 1.0}),
+        lambda t: clf.ClassificationResult(["education"], "", {"education": 1.0}),
     )
     monkeypatch.setattr(
         main_mod.actions,

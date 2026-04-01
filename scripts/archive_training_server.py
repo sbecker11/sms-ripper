@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Local HTTP UI to review and iteratively re-run LLM tag classification on POLITICAL_archive rows.
+Local HTTP UI to review and iteratively re-run LLM tag classification on message_tags_archive rows.
 
 Binds to loopback only. **Quit Messages.app** before running if chat.db is the live library
 (see project README) so the DB is not locked.
@@ -35,23 +35,29 @@ import archive_tag_training as att  # noqa: E402
 import config  # noqa: E402
 import generate_report_html as report_html  # noqa: E402
 import html_tz_toggle  # noqa: E402
+import tag_catalog  # noqa: E402
 
-ARCHIVE = att.ARCHIVE_TABLE
 _REPORTS_DIR = _REPO / "reports"
 _DAEMON_CYCLES_DIR = _REPORTS_DIR / "daemon-cycles"
 
 
-def _training_tags_set() -> set[str]:
-    return set(att.TRAINING_TAGS)
+def _archive_table(conn: sqlite3.Connection) -> str:
+    return archive.require_archive_table(conn, "education")
+
+
+def _training_tags_set(conn: sqlite3.Connection) -> set[str]:
+    return set(att._training_tags(conn))
 
 
 def _archive_column_names(conn: sqlite3.Connection) -> set[str]:
-    return {r[1] for r in conn.execute(f"PRAGMA table_info({ARCHIVE})").fetchall()}
+    table = _archive_table(conn)
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def _fetch_archive_message(conn: sqlite3.Connection, rowid: int) -> dict[str, object] | None:
     if not _archive_column_names(conn):
         return None
+    table = _archive_table(conn)
     cols = _archive_column_names(conn)
     select_cols: list[str] = ["p.rowid", "p.date", "p.text"]
     if "subject" in cols:
@@ -66,7 +72,7 @@ def _fetch_archive_message(conn: sqlite3.Connection, rowid: int) -> dict[str, ob
 
     q = (
         f"SELECT {', '.join(select_cols)} "
-        f"FROM {ARCHIVE} AS p "
+        f"FROM {table} AS p "
         f"LEFT JOIN handle AS h ON p.handle_id = h.rowid "
         f"WHERE p.rowid = ?"
     )
@@ -88,8 +94,9 @@ def _json_bytes(obj: object, status: int = 200) -> tuple[int, bytes, str]:
     return status, body, "application/json; charset=utf-8"
 
 
-def _page_html(rowid: int) -> str:
+def _page_html(rowid: int, reviewer_id: str = "") -> str:
     ht = html_tz_toggle
+    reviewer_id_json = json.dumps((reviewer_id or "").strip(), ensure_ascii=False)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -256,6 +263,38 @@ def _page_html(rowid: int) -> str:
     footer button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
     .err {{ color: var(--sr-err); margin: 0.5rem 0; }}
     .reason {{ font-size: 0.82rem; color: var(--sr-fg-muted); margin-top: 0.75rem; }}
+    .guard-edit label {{
+      display: block;
+      font-size: 0.72rem;
+      color: var(--sr-fg-muted);
+      margin: 0.18rem 0 0.12rem;
+    }}
+    .guard-edit input[type="text"] {{
+      width: 100%;
+      margin-bottom: 0.2rem;
+    }}
+    .guard-pills {{
+      margin-top: 0.25rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem;
+    }}
+    .guard-pill {{
+      display: inline-block;
+      padding: 0.1rem 0.35rem;
+      border: 1px solid var(--sr-border);
+      border-radius: 999px;
+      font-size: 0.7rem;
+      color: var(--sr-fg-muted);
+    }}
+    .guard-pill.inc {{ border-color: color-mix(in srgb, #4caf50 45%, var(--sr-border)); }}
+    .guard-pill.exc {{ border-color: color-mix(in srgb, #e53935 45%, var(--sr-border)); }}
+    .guard-preview {{
+      margin-top: 0.75rem;
+      font-size: 0.78rem;
+      color: var(--sr-fg-muted);
+      white-space: pre-wrap;
+    }}
     {ht.TOGGLE_CSS}
   </style>
 {ht.THEME_BOOTSTRAP_HEAD}
@@ -276,6 +315,7 @@ def _page_html(rowid: int) -> str:
       </colgroup>
       <thead><tr><th>Tag</th><th>On</th><th title="LLM confidence 0–1">W</th><th>Source</th><th>Keywords / hints</th></tr></thead>
     </table>
+    <div id="guard-preview" class="guard-preview"></div>
     <p class="err" id="err" hidden></p>
   <footer>
     <button type="button" id="done">Done</button>
@@ -286,12 +326,14 @@ def _page_html(rowid: int) -> str:
   <script>
 (function () {{
   const ROWID = {int(rowid)};
+  const REVIEWER_ID = {reviewer_id_json};
   const metaEl = document.getElementById("meta");
   const bodyEl = document.getElementById("body");
   const tagTable = document.getElementById("archive-training-tag-table");
   const errEl = document.getElementById("err");
   const reasonEl = document.getElementById("reason");
   const applyBtn = document.getElementById("apply");
+  const guardPreviewEl = document.getElementById("guard-preview");
 
   function closeTrainingTab() {{
     try {{
@@ -409,6 +451,7 @@ def _page_html(rowid: int) -> str:
     var dateIso = fmtNsISO(data.date_ns);
     metaEl.innerHTML =
       "<span><strong>rowid</strong> " + data.rowid + "</span>" +
+      "<span><strong>reviewer</strong> " + (REVIEWER_ID || "unknown") + "</span>" +
       "<span><strong>date</strong> " +
         "<span class='dt-adjustable' data-utc='" + dateIso + "'>" + fmtNs(data.date_ns) + "</span>" +
       "</span>" +
@@ -433,27 +476,47 @@ def _page_html(rowid: int) -> str:
       var trHuman = document.createElement("tr");
       trHuman.className = "human";
       trHuman.dataset.tag = t.tag;
+      trHuman.dataset.modelInclude = String(t.model_include_guards || "");
+      trHuman.dataset.modelExclude = String(t.model_exclude_guards || "");
       trHuman.innerHTML =
         "<td class=\\"tag\\">" + tag + "</td>" +
         "<td><input type=\\"checkbox\\" class=\\"hum-check\\" " + (t.human_checked ? "checked" : "") + " /></td>" +
         "<td class=\\"mono wcol\\">—</td>" +
         "<td>Human</td>" +
-        "<td><input type=\\"text\\" class=\\"hum-kw\\" /></td>";
+        "<td><div class=\\"guard-edit\\">" +
+          "<label>Message hints</label><input type=\\"text\\" class=\\"hum-kw\\" />" +
+          "<label>Add include guards</label><input type=\\"text\\" class=\\"hum-inc\\" placeholder=\\"term1, term2\\" />" +
+          "<label>Add exclude guards</label><input type=\\"text\\" class=\\"hum-exc\\" placeholder=\\"term1, term2\\" />" +
+        "</div></td>";
       trHuman.querySelector(".hum-kw").value = humKw;
+      trHuman.querySelector(".hum-kw").addEventListener("input", updateGuardPreview);
+      trHuman.querySelector(".hum-inc").addEventListener("input", updateGuardPreview);
+      trHuman.querySelector(".hum-exc").addEventListener("input", updateGuardPreview);
+      trHuman.querySelector(".hum-check").addEventListener("change", updateGuardPreview);
       var trLlm = document.createElement("tr");
       trLlm.className = "llm";
+      var pills = "";
+      var incGuards = String(t.model_include_guards || "").trim();
+      var excGuards = String(t.model_exclude_guards || "").trim();
+      if (incGuards || excGuards) {{
+        pills += "<div class=\\"guard-pills\\">";
+        if (incGuards) pills += "<span class=\\"guard-pill inc\\">+ " + escapeHtml(incGuards) + "</span>";
+        if (excGuards) pills += "<span class=\\"guard-pill exc\\">- " + escapeHtml(excGuards) + "</span>";
+        pills += "</div>";
+      }}
       trLlm.innerHTML =
         "<td class=\\"tag\\">" + tag + "</td>" +
         "<td><input type=\\"checkbox\\" disabled " + (t.llm_checked ? "checked" : "") + " /></td>" +
         "<td class=\\"mono wcol\\">" + escapeHtml(fmtWeight(t.llm_weight)) + "</td>" +
         "<td>LLM</td>" +
-        "<td class=\\"kw\\">" + llmKw + "</td>";
+        "<td class=\\"kw\\">" + llmKw + pills + "</td>";
       var tb = document.createElement("tbody");
       tb.className = "train-pair";
       tb.appendChild(trHuman);
       tb.appendChild(trLlm);
       tagTable.appendChild(tb);
     }});
+    updateGuardPreview();
   }}
 
   function escapeHtml(s) {{
@@ -470,10 +533,53 @@ def _page_html(rowid: int) -> str:
       out.push({{
         tag: tr.dataset.tag,
         human_checked: tr.querySelector(".hum-check").checked,
-        human_keywords: tr.querySelector(".hum-kw").value
+        human_keywords: tr.querySelector(".hum-kw").value,
+        human_include_guards: tr.querySelector(".hum-inc").value,
+        human_exclude_guards: tr.querySelector(".hum-exc").value
       }});
     }});
     return out;
+  }}
+
+  function splitCsv(raw) {{
+    var out = [];
+    var seen = Object.create(null);
+    String(raw || "").split(",").forEach(function (p) {{
+      var t = p.trim();
+      if (!t) return;
+      var k = t.toLowerCase();
+      if (seen[k]) return;
+      seen[k] = true;
+      out.push(t);
+    }});
+    return out;
+  }}
+
+  function updateGuardPreview() {{
+    if (!guardPreviewEl) return;
+    var lines = [];
+    tagTable.querySelectorAll("tbody.train-pair tr.human").forEach(function (tr) {{
+      var tag = tr.dataset.tag || "";
+      var existingInc = splitCsv(tr.dataset.modelInclude || "");
+      var existingExc = splitCsv(tr.dataset.modelExclude || "");
+      var addInc = splitCsv(tr.querySelector(".hum-inc").value);
+      var addExc = splitCsv(tr.querySelector(".hum-exc").value);
+      var existingIncSet = Object.create(null);
+      var existingExcSet = Object.create(null);
+      existingInc.forEach(function (t) {{ existingIncSet[t.toLowerCase()] = true; }});
+      existingExc.forEach(function (t) {{ existingExcSet[t.toLowerCase()] = true; }});
+      var newInc = addInc.filter(function (t) {{ return !existingIncSet[t.toLowerCase()]; }});
+      var newExc = addExc.filter(function (t) {{ return !existingExcSet[t.toLowerCase()]; }});
+      if (newInc.length || newExc.length) {{
+        var parts = [];
+        if (newInc.length) parts.push("+" + newInc.join(", +"));
+        if (newExc.length) parts.push("-" + newExc.join(", -"));
+        lines.push(tag + ": " + parts.join("  "));
+      }}
+    }});
+    guardPreviewEl.textContent = lines.length
+      ? ("Pending guard changes on Apply:\\n" + lines.join("\\n"))
+      : "Pending guard changes on Apply: (none)";
   }}
 
   async function load() {{
@@ -501,7 +607,7 @@ def _page_html(rowid: int) -> str:
       var r = await fetch("/api/message/" + ROWID + "/regenerate", {{
         method: "POST",
         headers: {{ "Content-Type": "application/json" }},
-        body: JSON.stringify({{ tags: collectTags() }})
+        body: JSON.stringify({{ tags: collectTags(), author: REVIEWER_ID || "unknown" }})
       }});
       var data = await r.json();
       if (!r.ok) throw new Error(data.error || r.statusText);
@@ -515,6 +621,178 @@ def _page_html(rowid: int) -> str:
 
   load();
 }})();
+  </script>
+</body>
+</html>
+"""
+
+
+def _api_tag_catalog_mutate(conn: sqlite3.Connection, body: dict[str, object]) -> None:
+    """Apply one mutation and commit. Raises ValueError on bad input."""
+    op = str(body.get("op") or "").strip().lower()
+    att.ensure_training_tables(conn)
+    if op == "add":
+        tag = str(body.get("tag") or "").strip()
+        active = bool(body.get("active", True))
+        archive_enabled = bool(body.get("archive_enabled", False))
+        tag_catalog.upsert_tag_row(conn, tag, active=active, archive_enabled=archive_enabled)
+        conn.commit()
+        return
+    if op == "update":
+        tag = str(body.get("tag") or "").strip()
+        active_v = body.get("active")
+        arch_v = body.get("archive_enabled")
+        active = active_v if isinstance(active_v, bool) else None
+        archive_enabled = arch_v if isinstance(arch_v, bool) else None
+        if active is None and archive_enabled is None:
+            raise ValueError("update requires at least one of active, archive_enabled (boolean)")
+        tag_catalog.set_tag_flags(
+            conn, tag, active=active, archive_enabled=archive_enabled
+        )
+        conn.commit()
+        return
+    if op == "rename":
+        fr = str(body.get("from") or body.get("old") or "").strip()
+        to = str(body.get("to") or body.get("new") or "").strip()
+        if not fr or not to:
+            raise ValueError("rename requires from and to")
+        att.rename_classifier_tag(conn, fr, to)
+        conn.commit()
+        return
+    raise ValueError(f"unknown op {op!r} (use add, update, rename)")
+
+
+_TAG_CATALOG_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>sms-ripper — Tag catalog</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; line-height: 1.45; }
+    body { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; }
+    nav { margin-bottom: 1rem; font-size: 0.9rem; }
+    nav a { color: #1565c0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+    th, td { border: 1px solid #ccc; padding: 0.35rem 0.5rem; text-align: left; }
+    th { background: #f5f5f5; }
+    td.mono { font-family: ui-monospace, monospace; }
+    .err { color: #c62828; margin: 0.5rem 0; }
+    .ok { color: #2e7d32; margin: 0.5rem 0; font-size: 0.85rem; }
+    footer.add-row { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd; }
+    label { display: inline-block; margin-right: 0.75rem; font-size: 0.85rem; }
+    input[type="text"] { padding: 0.25rem 0.4rem; width: 12rem; }
+    button { font: inherit; padding: 0.25rem 0.6rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <nav><a href="/">← Archive index</a></nav>
+  <h1>Tag catalog</h1>
+  <p style="font-size:0.85rem;color:#555">Active tags drive the classifier prompt and training UI.
+  <strong>Archive</strong> marks tags that copy rows into <code>message_tags_archive</code> when present
+  (first match in attribute order). Renaming updates training/guard tables only — not stored JSON on old rows.</p>
+  <p class="err" id="msg" hidden></p>
+  <p class="ok" id="ok" hidden></p>
+  <div id="tbl"></div>
+  <footer class="add-row">
+    <strong>Add tag</strong>
+    <div style="margin-top:0.5rem">
+      <input type="text" id="newtag" placeholder="e.g. finance" />
+      <label><input type="checkbox" id="newactive" checked /> active</label>
+      <label><input type="checkbox" id="newarch" /> archive</label>
+      <button type="button" id="btnadd">Add</button>
+    </div>
+  </footer>
+  <script>
+(function () {
+  var msgEl = document.getElementById("msg");
+  var okEl = document.getElementById("ok");
+  var tblEl = document.getElementById("tbl");
+  function showErr(t) {
+    msgEl.textContent = t || "";
+    msgEl.hidden = !t;
+    okEl.hidden = true;
+  }
+  function showOk(t) {
+    okEl.textContent = t || "Saved.";
+    okEl.hidden = false;
+    msgEl.hidden = true;
+  }
+  function esc(s) {
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+  function render(rows) {
+    var h = "<table><thead><tr><th>Tag</th><th>Active</th><th>Archive</th><th>Rename to</th><th></th></tr></thead><tbody>";
+    rows.forEach(function (r) {
+      var tag = r.tag;
+      h += "<tr><td class=\\"mono\\">" + esc(tag) + "</td>";
+      h += "<td><input type=\\"checkbox\\" data-tag=\\"" + esc(tag) + "\\" class=\\"cb-act\\" " + (r.active ? "checked" : "") + " /></td>";
+      h += "<td><input type=\\"checkbox\\" data-tag=\\"" + esc(tag) + "\\" class=\\"cb-arch\\" " + (r.archive_enabled ? "checked" : "") + " /></td>";
+      h += "<td><input type=\\"text\\" class=\\"rn-to\\" data-tag=\\"" + esc(tag) + "\\" placeholder=\\"new_key\\" /></td>";
+      h += "<td><button type=\\"button\\" class=\\"btn-rn\\" data-tag=\\"" + esc(tag) + "\\">Rename</button></td></tr>";
+    });
+    h += "</tbody></table>";
+    tblEl.innerHTML = h;
+    tblEl.querySelectorAll(".cb-act").forEach(function (el) {
+      el.addEventListener("change", function () {
+        var t = el.getAttribute("data-tag");
+        post({ op: "update", tag: t, active: el.checked });
+      });
+    });
+    tblEl.querySelectorAll(".cb-arch").forEach(function (el) {
+      el.addEventListener("change", function () {
+        var t = el.getAttribute("data-tag");
+        post({ op: "update", tag: t, archive_enabled: el.checked });
+      });
+    });
+    tblEl.querySelectorAll(".btn-rn").forEach(function (el) {
+      el.addEventListener("click", function () {
+        var t = el.getAttribute("data-tag");
+        var tr = el.closest("tr");
+        var inp = tr ? tr.querySelector(".rn-to") : null;
+        var to = (inp && inp.value || "").trim();
+        if (!to) { showErr("Enter new tag name"); return; }
+        post({ op: "rename", from: t, to: to }).then(function () { if (inp) inp.value = ""; });
+      });
+    });
+  }
+  function load() {
+    showErr("");
+    return fetch("/api/tag-catalog").then(function (r) { return r.json(); }).then(function (d) {
+      if (d.error) showErr(d.error);
+      else render(d.tags || []);
+    }).catch(function (e) { showErr(String(e)); });
+  }
+  function post(body) {
+    showErr("");
+    return fetch("/api/tag-catalog", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      return r.json().then(function (j) { return { ok: r.ok, j: j }; });
+    }).then(function (x) {
+      if (!x.ok) {
+        showErr((x.j && x.j.error) || "Request failed");
+        return Promise.reject(new Error((x.j && x.j.error) || "fail"));
+      }
+      showOk("Saved.");
+      return load();
+    });
+  }
+  document.getElementById("btnadd").addEventListener("click", function () {
+    var tag = document.getElementById("newtag").value.trim();
+    if (!tag) { showErr("Enter a tag name"); return; }
+    post({
+      op: "add",
+      tag: tag,
+      active: document.getElementById("newactive").checked,
+      archive_enabled: document.getElementById("newarch").checked
+    }).then(function () { document.getElementById("newtag").value = ""; });
+  });
+  load();
+})();
   </script>
 </body>
 </html>
@@ -587,7 +865,8 @@ class TrainingHandler(BaseHTTPRequestHandler):
 
         if len(parts) == 2 and parts[0] == "message" and parts[1].isdigit():
             rid = int(parts[1])
-            body = _page_html(rid).encode("utf-8")
+            reviewer_id = str(getattr(self.server, "reviewer_id", "") or "")
+            body = _page_html(rid, reviewer_id=reviewer_id).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -648,6 +927,34 @@ class TrainingHandler(BaseHTTPRequestHandler):
             self.wfile.write(b)
             return
 
+        if len(parts) == 2 and parts[0] == "api" and parts[1] == "tag-catalog":
+            conn = self._db()
+            try:
+                rows = tag_catalog.list_catalog_rows(conn)
+                st, b, ct = _json_bytes({"tags": rows}, 200)
+            except Exception as e:
+                st, b, ct = _json_bytes(
+                    {"error": str(e), "trace": traceback.format_exc()},
+                    500,
+                )
+            finally:
+                conn.close()
+            self.send_response(st)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+            return
+
+        if len(parts) == 1 and parts[0] == "tag-catalog":
+            raw = _TAG_CATALOG_HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+
         self.send_error(404)
 
     def do_POST(self) -> None:
@@ -684,20 +991,32 @@ class TrainingHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(b)
                 return
-            got = {str(t.get("tag", "")).strip().upper() for t in tags if isinstance(t, dict)}
-            if got != _training_tags_set():
-                st, b, ct = _json_bytes(
-                    {"error": "tags must include exactly the canonical tag set"},
-                    400,
-                )
-                self.send_response(st)
-                self.send_header("Content-Type", ct)
-                self.send_header("Content-Length", str(len(b)))
-                self.end_headers()
-                self.wfile.write(b)
-                return
+            author = body.get("author")
+            author_s = str(author).strip() if author is not None else "unknown"
+            if not author_s:
+                author_s = "unknown"
+            got = {
+                tag_catalog.normalize_tag(str(t.get("tag", "")))
+                for t in tags
+                if isinstance(t, dict) and tag_catalog.normalize_tag(str(t.get("tag", "")))
+            }
             conn = self._db()
             try:
+                expected = _training_tags_set(conn)
+                if got != expected:
+                    st, b, ct = _json_bytes(
+                        {
+                            "error": "tags must include exactly the active catalog tag set",
+                            "expected": sorted(expected),
+                        },
+                        400,
+                    )
+                    self.send_response(st)
+                    self.send_header("Content-Type", ct)
+                    self.send_header("Content-Length", str(len(b)))
+                    self.end_headers()
+                    self.wfile.write(b)
+                    return
                 row = _fetch_archive_message(conn, rid)
                 if not row:
                     st, b, ct = _json_bytes({"error": "not found"}, 404)
@@ -707,7 +1026,9 @@ class TrainingHandler(BaseHTTPRequestHandler):
                         conn,
                         archive_rowid=rid,
                         message_text=msg_text,
+                        message_subject=att.coerce_str_field(row["subject"]),
                         human_tag_rows=[t for t in tags if isinstance(t, dict)],
+                        author=author_s,
                     )
                     state = att.build_message_state(
                         conn,
@@ -721,6 +1042,49 @@ class TrainingHandler(BaseHTTPRequestHandler):
                     )
                     st, b, ct = _json_bytes({"ok": True, "attributes": attrs, "reason": reason, "state": state})
             except Exception as e:
+                st, b, ct = _json_bytes(
+                    {"error": str(e), "trace": traceback.format_exc()},
+                    500,
+                )
+            finally:
+                conn.close()
+            self.send_response(st)
+            self.send_header("Content-Type", ct)
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+            return
+
+        if len(parts) == 2 and parts[0] == "api" and parts[1] == "tag-catalog":
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                body = json.loads(raw.decode("utf-8"))
+            except json.JSONDecodeError:
+                st, b, ct = _json_bytes({"error": "invalid JSON"}, 400)
+                self.send_response(st)
+                self.send_header("Content-Type", ct)
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+                return
+            if not isinstance(body, dict):
+                st, b, ct = _json_bytes({"error": "JSON body must be an object"}, 400)
+                self.send_response(st)
+                self.send_header("Content-Type", ct)
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+                return
+            conn = self._db()
+            try:
+                _api_tag_catalog_mutate(conn, body)
+                st, b, ct = _json_bytes({"ok": True}, 200)
+            except ValueError as e:
+                conn.rollback()
+                st, b, ct = _json_bytes({"error": str(e)}, 400)
+            except Exception as e:
+                conn.rollback()
                 st, b, ct = _json_bytes(
                     {"error": str(e), "trace": traceback.format_exc()},
                     500,
@@ -795,10 +1159,12 @@ def main() -> int:
     httpd.db_conn_factory = open_conn  # type: ignore[attr-defined]
     httpd.index_row_limit = max(1, args.limit)  # type: ignore[attr-defined]
     httpd.chat_db_display_path = db_path  # type: ignore[attr-defined]
+    httpd.reviewer_id = str(getattr(config, "REVIEWER_ID", "") or "").strip()  # type: ignore[attr-defined]
     base_url = f"http://{args.host}:{args.port}/"
     print(f"Archive training server {base_url} (database {db_path})")
     print(
-        f"GET / — political archive index (up to {args.limit} rows); full icon opens /message/<rowid>."
+        f"GET / — archive index (up to {args.limit} rows); full opens /message/<rowid>; "
+        "GET /tag-catalog — edit tag list (stored in chat.db)."
     )
     if not args.no_browser:
         _open_browser_chrome_or_default(base_url)

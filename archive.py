@@ -20,6 +20,7 @@ from typing import Final
 
 import classifier
 import config
+import tag_catalog
 from reader import Message
 
 logger = logging.getLogger("sms_agent")
@@ -43,22 +44,53 @@ def _warning(msg: str) -> None:
         logger.warning(msg)
 
 
-# Tags that have an archive table named <TAG>_archive (extend as needed).
-ARCHIVAL_TAGS: Final[frozenset[str]] = frozenset({"POLITICAL"})
+# Primary archival tag for this repo’s default catalog (see ``tag_catalog.DEFAULT_TAG_ROWS``).
+# Not a universal constant—change if your catalog uses a different key for the same role.
+DEFAULT_ARCHIVE_KEY: Final[str] = "education"
+CANONICAL_ARCHIVE_TABLE: Final[str] = "message_tags_archive"
+
+ARCHIVAL_TAGS: Final[frozenset[str]] = frozenset({DEFAULT_ARCHIVE_KEY})
 
 
-def first_archival_tag(attributes: list[str]) -> str | None:
+def first_archival_tag(
+    attributes: list[str], archival_tags: set[str] | None = None
+) -> str | None:
     """First attribute (in list order) that is configured for archiving."""
+    raw = archival_tags if archival_tags is not None else set(ARCHIVAL_TAGS)
+    active = {tag_catalog.normalize_tag(str(t)) for t in raw}
     for attr in attributes:
-        if attr in ARCHIVAL_TAGS:
-            return attr
+        au = tag_catalog.normalize_tag(str(attr))
+        if au in active:
+            return au
     return None
 
 
 def archive_table_name(tag: str) -> str:
-    if not re.fullmatch(r"[A-Z][A-Z0-9_]*", tag):
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", tag):
         raise ValueError(f"Invalid archival tag for SQL identifier: {tag!r}")
+    if tag == DEFAULT_ARCHIVE_KEY:
+        return CANONICAL_ARCHIVE_TABLE
     return f"{tag}_archive"
+
+
+def require_archive_table(conn: sqlite3.Connection, tag: str) -> str:
+    """
+    Return :func:`archive_table_name` for ``tag`` if that table exists in ``conn``.
+
+    Raises ``RuntimeError`` immediately if the table is missing (no alternate names, no rename).
+    """
+    name = archive_table_name(tag)
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (name,),
+    ).fetchone()
+    if not row:
+        raise RuntimeError(
+            f"Archive table {name!r} is missing from the database. "
+            "Create it with a normal archive run (see archive_message) or point CHAT_DB_PATH "
+            "at a database that already has this table."
+        )
+    return name
 
 
 def _quote_ident(name: str) -> str:
@@ -68,6 +100,7 @@ def _quote_ident(name: str) -> str:
 
 
 def _ensure_archive_table(conn: sqlite3.Connection, tag: str) -> str:
+    tag_catalog.ensure_tag_catalog(conn)
     table = archive_table_name(tag)
     q = _quote_ident(table)
     row = conn.execute(
@@ -85,7 +118,7 @@ def _ensure_archive_table(conn: sqlite3.Connection, tag: str) -> str:
 
 def _archive_columns_from_message(conn: sqlite3.Connection, archive_table: str) -> list[str]:
     """Names of columns to copy from `message` into the archive table (handles extra archive-only cols)."""
-    if not re.fullmatch(r"[A-Z][A-Z0-9_]*_archive", archive_table):
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*_archive", archive_table):
         raise ValueError(f"Unexpected archive table name: {archive_table!r}")
     msg_order = [r[1] for r in conn.execute("PRAGMA table_info(message)").fetchall()]
     arch_names = {r[1] for r in conn.execute(f"PRAGMA table_info({archive_table})").fetchall()}
@@ -227,12 +260,13 @@ def archive_message(message: Message) -> bool:
     Copy message row into <first_archival_tag>_archive, then delete the live message row.
     Returns False if no archival tag applies or on error.
     """
-    tag = first_archival_tag(message.attributes)
-    if tag is None:
-        _warning("[ARCHIVE] No archival tag in attributes; skipping")
-        return False
-
     if config.DRY_RUN:
+        tag = first_archival_tag(
+            message.attributes, {tag_catalog.canonical_tag(DEFAULT_ARCHIVE_KEY)}
+        )
+        if tag is None:
+            _warning("[ARCHIVE] No archival tag in attributes; skipping")
+            return False
         _info(
             f"[DRY RUN] Would archive message rowid={message.rowid} into {archive_table_name(tag)}"
         )
@@ -244,6 +278,13 @@ def archive_message(message: Message) -> bool:
     try:
         conn = sqlite3.connect(db_path, timeout=30.0)
         _register_chat_db_trigger_stubs(conn)
+        archival_tags = tag_catalog.archival_tags(conn) or {
+            tag_catalog.canonical_tag(DEFAULT_ARCHIVE_KEY)
+        }
+        tag = first_archival_tag(message.attributes, archival_tags)
+        if tag is None:
+            _warning("[ARCHIVE] No archival tag in attributes; skipping")
+            return False
         tbl = _ensure_archive_table(conn, tag)
         qtbl = _quote_ident(tbl)
 

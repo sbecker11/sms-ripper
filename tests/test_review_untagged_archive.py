@@ -26,7 +26,7 @@ def test_is_review_candidate():
     assert mod.is_review_candidate(None, include_unknown_only=False) is True
     assert mod.is_review_candidate("", include_unknown_only=False) is True
     assert mod.is_review_candidate("[]", include_unknown_only=False) is True
-    assert mod.is_review_candidate('["POLITICAL"]', include_unknown_only=False) is False
+    assert mod.is_review_candidate('["education"]', include_unknown_only=False) is False
     assert mod.is_review_candidate('["UNKNOWN"]', include_unknown_only=False) is False
     assert mod.is_review_candidate('["UNKNOWN"]', include_unknown_only=True) is True
 
@@ -36,22 +36,22 @@ def test_fetch_candidates_sql(tmp_path):
     db = tmp_path / "c.db"
     conn = sqlite3.connect(db)
     conn.execute(
-        "CREATE TABLE POLITICAL_archive (rowid INTEGER PRIMARY KEY, date INTEGER, text TEXT, handle_id INTEGER)"
+        "CREATE TABLE message_tags_archive (rowid INTEGER PRIMARY KEY, date INTEGER, text TEXT, handle_id INTEGER)"
     )
     conn.execute("CREATE TABLE handle (rowid INTEGER PRIMARY KEY, id TEXT)")
     conn.execute("INSERT INTO handle (rowid, id) VALUES (1, '+1')")
     conn.execute(
-        f"ALTER TABLE POLITICAL_archive ADD COLUMN {mod.COL} TEXT"
+        f"ALTER TABLE message_tags_archive ADD COLUMN {mod.COL} TEXT"
     )
     conn.execute(
-        "INSERT INTO POLITICAL_archive (rowid, date, text, handle_id, classifier_attributes) "
+        "INSERT INTO message_tags_archive (rowid, date, text, handle_id, classifier_attributes) "
         "VALUES (?,?,?,?,?)",
         (1, 1000, "a", 1, None),
     )
     conn.execute(
-        "INSERT INTO POLITICAL_archive (rowid, date, text, handle_id, classifier_attributes) "
+        "INSERT INTO message_tags_archive (rowid, date, text, handle_id, classifier_attributes) "
         "VALUES (?,?,?,?,?)",
-        (2, 2000, "b", 1, json.dumps(["POLITICAL"])),
+        (2, 2000, "b", 1, json.dumps(["education"])),
     )
     conn.commit()
 
@@ -66,15 +66,15 @@ def test_fetch_includes_unknown_only_when_requested(tmp_path):
     db = tmp_path / "c.db"
     conn = sqlite3.connect(db)
     conn.execute(
-        "CREATE TABLE POLITICAL_archive (rowid INTEGER PRIMARY KEY, date INTEGER, text TEXT, classifier_attributes TEXT)"
+        "CREATE TABLE message_tags_archive (rowid INTEGER PRIMARY KEY, date INTEGER, text TEXT, classifier_attributes TEXT)"
     )
     conn.execute(
-        "INSERT INTO POLITICAL_archive (rowid, date, text, classifier_attributes) VALUES (?,?,?,?)",
+        "INSERT INTO message_tags_archive (rowid, date, text, classifier_attributes) VALUES (?,?,?,?)",
         (1, 1, "x", json.dumps(["UNKNOWN"])),
     )
     conn.execute(
-        "INSERT INTO POLITICAL_archive (rowid, date, text, classifier_attributes) VALUES (?,?,?,?)",
-        (2, 2, "y", json.dumps(["POLITICAL"])),
+        "INSERT INTO message_tags_archive (rowid, date, text, classifier_attributes) VALUES (?,?,?,?)",
+        (2, 2, "y", json.dumps(["education"])),
     )
     conn.commit()
     rows = mod.fetch_candidates(conn, include_unknown_only=True, limit=10)

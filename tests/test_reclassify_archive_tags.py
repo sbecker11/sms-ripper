@@ -29,11 +29,11 @@ def test_reclassify_updates_classifier_attributes(tmp_path: Path, monkeypatch: p
     db = tmp_path / "chat.db"
     conn = sqlite3.connect(db)
     conn.execute(
-        "CREATE TABLE POLITICAL_archive (rowid INTEGER PRIMARY KEY, text TEXT)"
+        "CREATE TABLE message_tags_archive (rowid INTEGER PRIMARY KEY, text TEXT)"
     )
-    archive._ensure_classifier_attributes_column(conn, "POLITICAL_archive")
+    archive._ensure_classifier_attributes_column(conn, "message_tags_archive")
     conn.execute(
-        "INSERT INTO POLITICAL_archive (rowid, text, classifier_attributes) VALUES (1, 'x', '[\"UNKNOWN\"]')"
+        "INSERT INTO message_tags_archive (rowid, text, classifier_attributes) VALUES (1, 'x', '[\"unknown\"]')"
     )
     conn.commit()
 
@@ -41,9 +41,9 @@ def test_reclassify_updates_classifier_attributes(tmp_path: Path, monkeypatch: p
         mod.classifier,
         "classify_message",
         lambda t: classifier.ClassificationResult(
-            ["POLITICAL", "SPAM"],
+            ["education", "spam"],
             "ok",
-            {"POLITICAL": 1.0, "SPAM": 1.0},
+            {"education": 1.0, "spam": 1.0},
         ),
     )
 
@@ -55,11 +55,11 @@ def test_reclassify_updates_classifier_attributes(tmp_path: Path, monkeypatch: p
     assert same == 0
 
     raw = conn.execute(
-        "SELECT classifier_attributes FROM POLITICAL_archive WHERE rowid = 1"
+        "SELECT classifier_attributes FROM message_tags_archive WHERE rowid = 1"
     ).fetchone()[0]
     assert json.loads(raw) == json.loads(
         classifier.encode_classifier_blob(
-            ["POLITICAL", "SPAM"], {"POLITICAL": 1.0, "SPAM": 1.0}
+            ["education", "spam"], {"education": 1.0, "spam": 1.0}
         )
     )
     conn.close()
@@ -69,17 +69,17 @@ def test_reclassify_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyP
     mod = _load_module()
     db = tmp_path / "chat.db"
     conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE POLITICAL_archive (rowid INTEGER PRIMARY KEY, text TEXT)")
-    archive._ensure_classifier_attributes_column(conn, "POLITICAL_archive")
+    conn.execute("CREATE TABLE message_tags_archive (rowid INTEGER PRIMARY KEY, text TEXT)")
+    archive._ensure_classifier_attributes_column(conn, "message_tags_archive")
     conn.execute(
-        'INSERT INTO POLITICAL_archive (rowid, text, classifier_attributes) VALUES (1, "y", \'["LEGIT"]\')'
+        'INSERT INTO message_tags_archive (rowid, text, classifier_attributes) VALUES (1, "y", \'["legit"]\')'
     )
     conn.commit()
 
     monkeypatch.setattr(
         mod.classifier,
         "classify_message",
-        lambda t: classifier.ClassificationResult(["POLITICAL"], "ok", {"POLITICAL": 1.0}),
+        lambda t: classifier.ClassificationResult(["education"], "ok", {"education": 1.0}),
     )
 
     u, same, err = mod.reclassify_archive_tags(
@@ -88,7 +88,75 @@ def test_reclassify_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert err == 0
     assert u == 1
     raw = conn.execute(
-        "SELECT classifier_attributes FROM POLITICAL_archive WHERE rowid = 1"
+        "SELECT classifier_attributes FROM message_tags_archive WHERE rowid = 1"
     ).fetchone()[0]
-    assert json.loads(raw) == ["LEGIT"]
+    assert json.loads(raw) == ["legit"]
+    conn.close()
+
+
+def test_reclassify_parallel_workers_updates_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    mod = _load_module()
+    db = tmp_path / "chat.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE message_tags_archive (rowid INTEGER PRIMARY KEY, text TEXT)")
+    archive._ensure_classifier_attributes_column(conn, "message_tags_archive")
+    conn.execute(
+        'INSERT INTO message_tags_archive (rowid, text, classifier_attributes) VALUES (1, "a", \'["unknown"]\')'
+    )
+    conn.execute(
+        'INSERT INTO message_tags_archive (rowid, text, classifier_attributes) VALUES (2, "b", \'["unknown"]\')'
+    )
+    conn.commit()
+
+    monkeypatch.setattr(
+        mod.classifier,
+        "classify_message",
+        lambda t: classifier.ClassificationResult(["spam"], "ok", {"spam": 1.0}),
+    )
+
+    u, same, err = mod.reclassify_archive_tags(
+        conn, dry_run=False, limit=None, delay_sec=0.0, workers=4, show_progress=False
+    )
+    assert err == 0
+    assert u == 2
+    assert same == 0
+    rows = conn.execute(
+        "SELECT classifier_attributes FROM message_tags_archive ORDER BY rowid"
+    ).fetchall()
+    assert all("spam" in json.loads(r[0]).get("attributes", []) for r in rows)
+    conn.close()
+
+
+def test_reclassify_custom_table_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    mod = _load_module()
+    db = tmp_path / "chat.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE SPAM_archive (rowid INTEGER PRIMARY KEY, text TEXT)")
+    archive._ensure_classifier_attributes_column(conn, "SPAM_archive")
+    conn.execute(
+        'INSERT INTO SPAM_archive (rowid, text, classifier_attributes) VALUES (1, "z", \'["unknown"]\')'
+    )
+    conn.commit()
+
+    monkeypatch.setattr(
+        mod.classifier,
+        "classify_message",
+        lambda t: classifier.ClassificationResult(["scam"], "ok", {"scam": 1.0}),
+    )
+    u, same, err = mod.reclassify_archive_tags(
+        conn,
+        table="SPAM_archive",
+        dry_run=False,
+        limit=None,
+        delay_sec=0.0,
+        workers=1,
+        show_progress=False,
+    )
+    assert err == 0
+    assert u == 1
+    assert same == 0
+    raw = conn.execute(
+        "SELECT classifier_attributes FROM SPAM_archive WHERE rowid = 1"
+    ).fetchone()[0]
+    assert "scam" in json.loads(raw).get("attributes", [])
     conn.close()

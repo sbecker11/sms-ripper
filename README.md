@@ -1,13 +1,15 @@
 # SMS-ripper Agent
 
-_An AI agent that rips out unwanted SMS messages._
+_A local macOS agent that classifies iMessages, applies your rules, and moves selected traffic out of the live thread._
 
-An AI-powered iMessage pipeline for **LLM-driven message categorization** plus **human-in-the-loop
-tag refinement**. It reads recent messages, classifies them with Claude into multi-label tags,
-applies rules, and lets you review/regenerate `classifier_attributes` from a local training UI
-using human hints and keyword guidance.
-The workflow also includes a generated archive report (`reports/index.html`); by default, rules
-currently action qualifying non-personal `POLITICAL` messages by archiving them.
+SMS-ripper reads **iMessage** data from **`chat.db`**, assigns **multi-label tags** with **Claude**
+against a **SQLite-backed tag catalog**, runs **declarative rules** (archive, delete, log-only,
+etc.), and—when configured—**archives** matching rows into **`message_tags_archive`** (then removes
+them from **`message`**). A **browser training UI** lets you refine tags with human hints and
+keyword guards and **regenerate** stored `classifier_attributes`; **`reports/index.html`** (and the
+training index) give you a filterable **Message Archive Report**. The default policy focus is
+**campaign / civic SMS**: archive **education** that is not **personal**, without sending STOP or
+mutating blocklists (see **Focus** below).
 
 ## Screenshots
 
@@ -28,9 +30,13 @@ Captions:
 python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt
 
 # 3. API key: project-root .env only — ANTHROPIC_API_KEY=sk-ant-...
+# 4. (Optional) training author ID for guard events/snapshots:
+# SMS_RIPPER_REVIEWER_ID=your-name
 ```
 
 See [docs/SETUP.md](docs/SETUP.md) for full setup. Configuration uses **Pydantic** / **pydantic-settings**; the agent still uses stdlib + `osascript` for Messages.
+
+**Architecture (catalog, policies, archive, training):** [docs/FRAMEWORK.md](docs/FRAMEWORK.md).
 
 ## Permissions Required
 
@@ -80,11 +86,11 @@ If you care about **pulling campaign / PAC SMS out of the live thread**, treat *
 
 1. **Preview** (no writes): `poe dry-run` or `poe dry-run-wide` (wider window / more rows).
 2. **Live run** (writes `chat.db`; **Messages must be quit**): `poe political-all` — backs up DB, quits Messages, then runs the agent with a wide lookback.
-3. **Where it goes**: qualifying rows are copied into the **`POLITICAL_archive`** table (same columns as `message`), then removed from **`message`** (see `archive.py`).
+3. **Where it goes**: qualifying rows are copied into the **`message_tags_archive`** table (same columns as `message`), then removed from **`message`** (see `archive.py`).
 
 **What gets archived**
 
-- Classifier must produce **`POLITICAL`** and not **`PERSONAL`** (`rules.py` → `political` rule).
+- Classifier must produce **`education`** and not **`personal`** (`rules.py` → `political` rule).
 - Matched action is **`archive`** only (no STOP, no blocklist).
 
 **Inspect without acting**: `poe preview-recent` / `poe preview-recent-compact` (see [docs/QUERIES.md](docs/QUERIES.md)).
@@ -117,21 +123,23 @@ Quick reference:
 
 **Static report:** each daemon cycle regenerates **`reports/index.html`** (political archive). **`poe report-generate`** / **`poe report-open`**.
 
-**Classification details:** [docs/CLASSIFICATION.md](docs/CLASSIFICATION.md) — multi-label tags, optional per-tag weights, archive JSON, and training column **W**.
+**Classification details:** [docs/CLASSIFICATION.md](docs/CLASSIFICATION.md) — multi-label tags, optional per-tag weights, archive JSON, and training column **W**. **System overview:** [docs/FRAMEWORK.md](docs/FRAMEWORK.md).
 
-**Archive tag training (local UI):** With Messages quit and **`ANTHROPIC_API_KEY`** set, run **`poe archive-training-server`** (or **`python scripts/archive_training_server.py`**). It binds to **loopback only** (default **http://127.0.0.1:8765**) and **opens Google Chrome** to that URL on macOS (**`--no-browser`** to skip). **`GET /`** serves the same **political archive index** as **`reports/index.html`** (newest first, **`--limit`** rows), plus a **last retrain** column (UTC from the last training-UI **Apply**) and a **Retrained (training UI)** filter so you can avoid redoing the same row. The **full** icon opens the tag editor at **`/message/<rowid>`**. **Apply** re-runs the classifier with your hints, updates **`POLITICAL_archive.classifier_attributes`** (plus small SQLite training tables), then **closes** the message tab and reloads the index tab when you opened it from there. **Done** closes **without** re-running the classifier (same index reload when opened from the index). For a **file://** report that jumps to the server, regenerate with **`--archive-training-url http://127.0.0.1:8765`** while the server is running.
+**Archive tag training (local UI):** With Messages quit and **`ANTHROPIC_API_KEY`** set, run **`poe archive-training-server`** (or **`python scripts/archive_training_server.py`**). It binds to **loopback only** (default **http://127.0.0.1:8765**) and **opens Google Chrome** to that URL on macOS (**`--no-browser`** to skip). **`GET /`** serves the same archive index as **`reports/index.html`** (newest first, **`--limit`** rows), plus a **last retrain** column (UTC from the last training-UI **Apply**) and a **Retrained (training UI)** filter so you can avoid redoing the same row. The **full** icon opens the tag editor at **`/message/<rowid>`**. **Apply** re-runs the classifier with your hints, updates **`message_tags_archive.classifier_attributes`** (plus small SQLite training tables), then **closes** the message tab and reloads the index tab when you opened it from there. **Done** closes **without** re-running the classifier (same index reload when opened from the index). For a **file://** report that jumps to the server, regenerate with **`--archive-training-url http://127.0.0.1:8765`** while the server is running.
 
 **Daemon log browser:** **`reports/daemon-cycles/index.html`** lists each parsed cycle (latest first, link to full text). **`poe daemon-cycles-generate`** / **`poe daemon-cycles-open`**. See [docs/DAEMON.md](docs/DAEMON.md).
 
 ## How It Works
+
+High-level layers and fail-fast archive behavior are described in **[docs/FRAMEWORK.md](docs/FRAMEWORK.md)**. In short:
 
 ```
 chat.db → reader.py → classifier.py (Claude API) → rules.py → actions.py
 ```
 
 1. **reader.py** — reads `~/Library/Messages/chat.db` in read-only mode
-2. **classifier.py** — sends each message to Claude Sonnet, gets back **multi-label** tags plus optional **per-tag weights** in **[0, 1]**; rules see the tag list after an optional **confidence threshold** (see [docs/CLASSIFICATION.md](docs/CLASSIFICATION.md)). Allowed tags:
-   `SPAM | STOP | SCAM | POLITICAL | PROMO | LEGIT | PERSONAL | UNKNOWN`
+2. **classifier.py** — sends each message to Claude Sonnet, gets back **multi-label** tags plus optional **per-tag weights** in **[0, 1]**; rules see the tag list after an optional **confidence threshold** (see [docs/CLASSIFICATION.md](docs/CLASSIFICATION.md)). **Allowed tags** are whatever is **active** in `sms_ripper_tag_catalog` (not a fixed global list). The default seed is illustrated as:
+   `spam | stop | scam | education | promo | legit | personal | unknown` — you may add others (e.g. `religion`) or use different keys if you keep the catalog and rules in sync.
 3. **rules.py** — maps attribute combinations to actions (merge order when multiple rules match)
 4. **actions.py** — executes: `send_stop`, `block`, `delete`, `archive`, `log_only`. **Execution order** is normalized so **`archive` always runs before `delete`** even if rule merge order differs.
 
@@ -142,15 +150,17 @@ Edit `rules.py` to add or modify rules. Each rule has:
 - `condition`: a lambda that takes the attributes list and returns True/False
 - `actions`: list of `send_stop`, `block`, `delete`, `archive`, `log_only`
 
-Example — archive political messages only (quit Messages before runs that touch `chat.db`; see `actions.py` for the quit guard):
+Example — archive when a **sample** tag is present (default seed uses `education` for civic bulk SMS; adjust strings to match your catalog):
 
 ```python
 Rule(
     name="political",
-    condition=lambda attrs: "POLITICAL" in attrs and "PERSONAL" not in attrs,
+    condition=lambda attrs: "education" in attrs and "personal" not in attrs,
     actions=["archive"],
 )
 ```
+
+The rule **name** and the **`political` policy** in code are implementation labels, not tag keys.
 
 `poe preview-recent` shows **`Actions (rule merge)`** vs **`Actions (execution)`** when they differ (matches `execute_actions`).
 

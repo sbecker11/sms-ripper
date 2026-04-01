@@ -13,7 +13,7 @@ APPLE_EPOCH_OFFSET = 978307200
 # Modern iMessage often stores body in attributedBody while text is NULL/empty.
 RICH_ONLY_PLACEHOLDER = (
     "[iMessage rich content only; plaintext missing in chat.db. "
-    "Sender is often a short code or PAC blast — classify as POLITICAL bulk SMS if applicable.]"
+    "Sender is often a short code or PAC blast — classify as education (civic bulk SMS) if applicable.]"
 )
 
 

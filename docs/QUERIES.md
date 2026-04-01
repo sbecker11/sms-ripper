@@ -4,7 +4,7 @@ Apple stores iMessage / SMS data in a local SQLite database:
 
 `~/Library/Messages/chat.db`
 
-You need **Full Disk Access** for the terminal or IDE that runs these queries. See [SETUP.md](SETUP.md).
+You need **Full Disk Access** for the terminal or IDE that runs these queries. See [SETUP.md](SETUP.md). For classifier, tag catalog, and archive design, see [FRAMEWORK.md](FRAMEWORK.md).
 
 ---
 
@@ -203,7 +203,7 @@ LIMIT 20;
 
 This is the **recommended terminal view** when you want a **visually tight** dump: two compact header lines (time/source + tags), then the body without extra padding under the dash separator, and only a single blank line before each full-width dash rule. It stays readable in a narrow or busy terminal without the wide columns and wrapped gutters of `sqlite3 -column` mode.
 
-**Classification:** by default each message is sent to **Claude** via `classifier.classify_message`, which returns **multi-label** tags and optional **per-tag weights** in [0, 1] (see [CLASSIFICATION.md](CLASSIFICATION.md) — not mutually exclusive “multiclass softmax”). The same vocabulary drives `rules.py`: SPAM, STOP, SCAM, POLITICAL, PROMO, LEGIT, PERSONAL, UNKNOWN. That uses your **Anthropic API key** from `.env` and incurs **one API request per message** shown. Use **`--no-classify`** or **`poe query-recent-tags-offline`** to skip calls and print **`(not classified)`** on the tags line.
+**Classification:** by default each message is sent to **Claude** via `classifier.classify_message`, which returns **multi-label** tags and optional **per-tag weights** in [0, 1] (see [CLASSIFICATION.md](CLASSIFICATION.md) — not mutually exclusive “multiclass softmax”). Tag names come from the DB catalog (active keys); the default seed includes `spam`, `stop`, `scam`, `education`, `promo`, `legit`, `personal`, `unknown`—not a fixed language constant, and you can add others (e.g. `religion`) if the catalog and rules agree. That uses your **Anthropic API key** from `.env` and incurs **one API request per message** shown. Use **`--no-classify`** or **`poe query-recent-tags-offline`** to skip calls and print **`(not classified)`** on the tags line.
 
 Output format:
 

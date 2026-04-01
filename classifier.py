@@ -2,32 +2,49 @@
 """
 Sends message text to Claude API and returns active attributes, reason, and per-tag weights.
 
-Possible attributes (extend as needed):
-  SPAM       — unsolicited commercial or phishing message
-  STOP       — opt-out / unsubscribe request or trigger
-  SCAM       — fraud / impersonation attempt
-  POLITICAL  — political messaging
-  PROMO      — promotional but not necessarily spam
-  LEGIT      — legitimate message, no action needed
-  PERSONAL   — from a known person
-  UNKNOWN    — cannot determine
+**Vocabulary:** Allowed attribute names are whatever **active** tags exist in
+:data:`tag_catalog` (SQLite ``sms_ripper_tag_catalog``), not a fixed enum in this module.
+The list below is only an **illustration** of what the repo seeds by default—users may add
+tags (e.g. ``religion``, ``political``) or use different keys; keep the catalog, rules, and
+any merge heuristics aligned if you rename defaults.
+
+Illustrative keys (default seed; all lowercase strings):
+  spam       — unsolicited commercial or phishing message
+  stop       — opt-out / unsubscribe request or trigger
+  scam       — fraud / impersonation attempt
+  education  — example: civic / campaign-style bulk messaging (PACs, parties, fundraising)
+  promo      — promotional but not necessarily spam
+  legit      — legitimate message, no action needed
+  personal   — from a known person
+  unknown    — cannot determine
 """
 
 import json
 import re
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from typing import NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 import config
 import reader
+import tag_catalog
 
 # Tags with weight below this are dropped from rule-driving ``attributes`` when the model sends weights.
 TAG_WEIGHT_THRESHOLD = 0.5
-# When POLITICAL is added only from keyword heuristics (not the model), use this score.
-HEURISTIC_POLITICAL_WEIGHT = 0.88
+
+# When a tag is added or raised only via keyword heuristics (not the model), clamp weight to [lo, hi].
+# Per-tag entries override these defaults for that tag only.
+DEFAULT_KEYWORD_HEURISTIC_MIN_WEIGHT = 0.88
+DEFAULT_KEYWORD_HEURISTIC_MAX_WEIGHT = 1.0
+KEYWORD_HEURISTIC_MIN_WEIGHT_BY_TAG: dict[str, float] = {}
+KEYWORD_HEURISTIC_MAX_WEIGHT_BY_TAG: dict[str, float] = {}
+
+
+def _norm_attr(s: object) -> str:
+    return tag_catalog.normalize_tag(str(s))
 
 
 class ClassificationResult(NamedTuple):
@@ -38,45 +55,52 @@ class ClassificationResult(NamedTuple):
     weights: dict[str, float]
 
 
-SYSTEM_PROMPT = """You are a message classification agent.
+def _build_system_prompt(active_tags: list[str]) -> str:
+    tags = sorted({_norm_attr(t) for t in active_tags if str(t).strip()})
+    if "unknown" not in tags:
+        tags.append("unknown")
+    tag_list = ", ".join(tags)
+    return f"""You are a message classification agent.
 Given an SMS or iMessage, return a JSON object with this exact shape:
 
-{
-  "attributes": ["ATTR1", "ATTR2"],
+{{
+  "attributes": ["spam", "legit"],
   "reason": "brief explanation",
-  "weights": {"ATTR1": 0.0, "ATTR2": 0.0}
-}
+  "weights": {{"spam": 0.0, "legit": 0.0}}
+}}
 
 Available attributes (assign all that apply):
-- SPAM: unsolicited bulk/commercial message (many political SMS count as both SPAM and POLITICAL)
-- STOP: message is an opt-out, unsubscribe, or the word STOP itself
-- SCAM: fraud, phishing, impersonation, fake prize, fake package delivery
-- POLITICAL: partisan or civic political content — campaigns, PACs, party committees, fundraising,
-  petitions, surveys, "contact your representative", get-out-the-vote, named politicians or
-  federal offices (President, VP, Speaker, Senator, Congress, White House, Supreme Court in a
-  civic/policy sense), party labels (GOP, Republican, Democrat, DNC, RNC), or links/domains
-  typical of political texting (e.g. vote-red, win-red, redtxt, short .red links, "save america").
-  Use POLITICAL even if the message also feels like spam or promo.
-- PROMO: promotional offer from a real business (not spam)
-- LEGIT: clearly legitimate transactional message (bank OTP, delivery confirmation, appointment reminder)
-- PERSONAL: one-to-one message from someone you know — NOT bulk political texts that insert a first name
-- UNKNOWN: cannot determine
+{tag_list}
 
 Rules:
 - Always assign at least one attribute.
-- SPAM and SCAM can coexist.
-- LEGIT and SPAM cannot coexist.
-- Political fundraising / party blast SMS: include POLITICAL; add SPAM if unsolicited bulk.
-- For every name in "attributes", include the same key in "weights" with a number from 0 to 1
+- Use unknown when there is not enough signal.
+- For every lowercase name in "attributes", include the same key in "weights" with a number from 0 to 1
   (supervised-style confidence: 1 = definite yes, 0 = no). Omitting "weights" is allowed; if present,
   every listed attribute must have a weight.
 - Return ONLY the JSON object. No markdown, no preamble.
 """
 
 
-# If any substring appears in the message (case-insensitive), POLITICAL is merged after the model
-# returns (catches common PAC / party SMS the model still misses).
-POLITICAL_TEXT_MARKERS: tuple[str, ...] = (
+def keyword_heuristic_weight_bounds(tag: str) -> tuple[float, float]:
+    """
+    Return ``(min, max)`` in [0, 1] used when ``tag`` is merged via :data:`KEYWORD_HEURISTIC_CHECKERS`.
+    Per-tag overrides use :data:`KEYWORD_HEURISTIC_MIN_WEIGHT_BY_TAG` /
+    :data:`KEYWORD_HEURISTIC_MAX_WEIGHT_BY_TAG`; missing keys use the defaults above.
+    """
+    t = _norm_attr(tag)
+    lo = KEYWORD_HEURISTIC_MIN_WEIGHT_BY_TAG.get(t, DEFAULT_KEYWORD_HEURISTIC_MIN_WEIGHT)
+    hi = KEYWORD_HEURISTIC_MAX_WEIGHT_BY_TAG.get(t, DEFAULT_KEYWORD_HEURISTIC_MAX_WEIGHT)
+    lo = max(0.0, min(1.0, float(lo)))
+    hi = max(0.0, min(1.0, float(hi)))
+    if hi < lo:
+        hi = lo
+    return lo, hi
+
+
+# Civic / PAC-style SMS markers → default catalog tag ``education``. Add more (tag, checker) pairs
+# in :data:`KEYWORD_HEURISTIC_CHECKERS` and matching marker tuples for other tags as needed.
+CIVIC_EDUCATION_KEYWORD_MARKERS: tuple[str, ...] = (
     "us-red",
     "white house",
     "vote-red",
@@ -142,8 +166,8 @@ POLITICAL_TEXT_MARKERS: tuple[str, ...] = (
     "proof of citizenship",
 )
 
-# Regex backstop for noisy political SMS where punctuation/brackets vary.
-POLITICAL_TEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
+# Regex backstop for noisy civic SMS where punctuation/brackets vary.
+CIVIC_EDUCATION_KEYWORD_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:house|senate)\s*gop\b", re.IGNORECASE),
     re.compile(r"\bpres(?:ident|\.)?\s*trump\b", re.IGNORECASE),
     re.compile(r"\b(?:vp\s*)?jd\s*vance\b", re.IGNORECASE),
@@ -171,30 +195,41 @@ def _normalize_for_keyword_scan(text: str) -> str:
     return s
 
 
-def _looks_political_by_keyword(text: str) -> bool:
+def _civic_education_keyword_hit(text: str) -> bool:
     raw = text.lower()
     norm = _normalize_for_keyword_scan(text)
-    for phrase in POLITICAL_TEXT_MARKERS:
+    for phrase in CIVIC_EDUCATION_KEYWORD_MARKERS:
         if phrase in raw or phrase in norm:
             return True
-    for pat in POLITICAL_TEXT_PATTERNS:
+    for pat in CIVIC_EDUCATION_KEYWORD_PATTERNS:
         if pat.search(text) or pat.search(norm):
             return True
     return False
 
 
-def _merge_political_keywords(
+# (catalog tag key, ``text -> bool``). If the model already listed the tag, skip (no weight bump).
+KEYWORD_HEURISTIC_CHECKERS: tuple[tuple[str, Callable[[str], bool]], ...] = (
+    ("education", _civic_education_keyword_hit),
+)
+
+
+def _merge_keyword_heuristics(
     text: str, attributes: list[str], weights: dict[str, float]
 ) -> tuple[list[str], dict[str, float]]:
-    attr_set = {a.upper() for a in attributes}
-    w = dict(weights)
-    if "POLITICAL" in attr_set:
-        return attributes, w
-    if _looks_political_by_keyword(text):
-        if "POLITICAL" not in attr_set:
-            attributes = [*attributes, "POLITICAL"]
-        w["POLITICAL"] = max(w.get("POLITICAL", 0.0), HEURISTIC_POLITICAL_WEIGHT)
-    return attributes, w
+    attr_set = {_norm_attr(a) for a in attributes}
+    w = {_norm_attr(k): float(v) for k, v in weights.items()}
+    attrs = [_norm_attr(a) for a in attributes]
+    for tag_raw, checker in KEYWORD_HEURISTIC_CHECKERS:
+        tag = _norm_attr(tag_raw)
+        if not tag or tag in attr_set:
+            continue
+        if not checker(text):
+            continue
+        attrs = [*attrs, tag]
+        attr_set.add(tag)
+        lo, hi = keyword_heuristic_weight_bounds(tag)
+        w[tag] = min(max(w.get(tag, 0.0), lo), hi)
+    return attrs, w
 
 
 def _normalize_weights_from_payload(
@@ -203,15 +238,18 @@ def _normalize_weights_from_payload(
     out: dict[str, float] = {}
     if raw:
         for k, v in raw.items():
-            kk = str(k).strip().upper()
+            kk = _norm_attr(k)
+            if not kk:
+                continue
             try:
                 fv = float(v)
             except (TypeError, ValueError):
                 continue
             out[kk] = max(0.0, min(1.0, fv))
     for a in attributes:
-        au = a.upper()
-        out.setdefault(au, 1.0)
+        au = _norm_attr(a)
+        if au:
+            out.setdefault(au, 1.0)
     return out
 
 
@@ -220,7 +258,7 @@ def _active_attributes(
 ) -> list[str]:
     if not had_explicit_weights:
         return attrs
-    active = [a for a in attrs if weights.get(a.upper(), 0.0) >= TAG_WEIGHT_THRESHOLD]
+    active = [a for a in attrs if weights.get(_norm_attr(a), 0.0) >= TAG_WEIGHT_THRESHOLD]
     return active if active else list(attrs)
 
 
@@ -229,7 +267,7 @@ class ClassificationPayload(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    attributes: list[str] = Field(default_factory=lambda: ["UNKNOWN"])
+    attributes: list[str] = Field(default_factory=lambda: ["unknown"])
     reason: str = ""
     weights: dict[str, float] | None = None
 
@@ -251,40 +289,44 @@ def decode_classifier_blob(raw: object) -> tuple[list[str], dict[str, float]]:
     except (TypeError, ValueError):
         return [], {}
     if isinstance(v, list):
-        attrs = [str(x).strip().upper() for x in v if x is not None and str(x).strip()]
+        attrs = [_norm_attr(x) for x in v if x is not None and str(x).strip()]
+        attrs = [a for a in attrs if a]
         weights = {a: 1.0 for a in attrs}
-        if "UNKNOWN" in {a.upper() for a in attrs}:
-            return ["UNKNOWN"], {"UNKNOWN": 1.0}
+        if "unknown" in attrs:
+            return ["unknown"], {"unknown": 1.0}
         return attrs, weights
     if isinstance(v, dict):
         raw_attrs = v.get("attributes")
         raw_w = v.get("weights")
         if isinstance(raw_attrs, list):
             attrs = [
-                str(x).strip().upper() for x in raw_attrs if x is not None and str(x).strip()
+                _norm_attr(x) for x in raw_attrs if x is not None and str(x).strip()
             ]
+            attrs = [a for a in attrs if a]
         else:
             attrs = []
         weights: dict[str, float] = {}
         if isinstance(raw_w, dict):
             for k, val in raw_w.items():
-                kk = str(k).strip().upper()
+                kk = _norm_attr(k)
+                if not kk:
+                    continue
                 try:
                     weights[kk] = max(0.0, min(1.0, float(val)))
                 except (TypeError, ValueError):
                     pass
         for a in attrs:
             weights.setdefault(a, 1.0)
-        if "UNKNOWN" in {a.upper() for a in attrs}:
-            return ["UNKNOWN"], {"UNKNOWN": weights.get("UNKNOWN", 1.0)}
+        if "unknown" in attrs:
+            return ["unknown"], {"unknown": weights.get("unknown", 1.0)}
         return attrs, weights
     return [], {}
 
 
 def encode_classifier_blob(attributes: list[str], weights: dict[str, float]) -> str:
     """JSON for ``classifier_attributes`` (includes weights for all active tags)."""
-    attrs_u = [a.upper() for a in attributes]
-    w = {str(k).upper(): max(0.0, min(1.0, float(v))) for k, v in weights.items()}
+    attrs_u = [_norm_attr(a) for a in attributes if _norm_attr(a)]
+    w = {_norm_attr(k): max(0.0, min(1.0, float(v))) for k, v in weights.items() if _norm_attr(k)}
     for a in attrs_u:
         w.setdefault(a, 1.0)
     return json.dumps({"attributes": attrs_u, "weights": w}, ensure_ascii=False)
@@ -324,9 +366,9 @@ def classify_message(
     if _has_no_usable_plaintext(text):
         if not (human_guidance or "").strip():
             return ClassificationResult(
-                ["UNKNOWN"],
+                ["unknown"],
                 "no subject or body — nothing to classify",
-                {"UNKNOWN": 1.0},
+                {"unknown": 1.0},
             )
 
     if not config.ANTHROPIC_API_KEY:
@@ -341,10 +383,11 @@ def classify_message(
             f"{g}"
         )
 
+    active_tags = tag_catalog.active_tags_from_db(config.CHAT_DB_PATH)
     payload = json.dumps({
         "model": "claude-sonnet-4-20250514",
         "max_tokens": 256,
-        "system": SYSTEM_PROMPT,
+        "system": _build_system_prompt(active_tags),
         "messages": [
             {"role": "user", "content": user_content}
         ]
@@ -376,30 +419,38 @@ def classify_message(
     try:
         parsed = json.loads(raw_text.strip())
     except json.JSONDecodeError:
-        u_attrs, u_w = _merge_political_keywords(text, ["UNKNOWN"], {"UNKNOWN": 1.0})
-        if "UNKNOWN" in {a.upper() for a in u_attrs}:
-            return ClassificationResult(["UNKNOWN"], f"Could not parse response: {raw_text[:200]}", {"UNKNOWN": u_w.get("UNKNOWN", 1.0)})
+        u_attrs, u_w = _merge_keyword_heuristics(text, ["unknown"], {"unknown": 1.0})
+        if "unknown" in {_norm_attr(a) for a in u_attrs}:
+            return ClassificationResult(
+                ["unknown"],
+                f"Could not parse response: {raw_text[:200]}",
+                {"unknown": u_w.get("unknown", 1.0)},
+            )
         return ClassificationResult(u_attrs, f"Could not parse response: {raw_text[:200]}", u_w)
 
     try:
         model = ClassificationPayload.model_validate(parsed)
     except ValidationError:
-        u_attrs, u_w = _merge_political_keywords(text, ["UNKNOWN"], {"UNKNOWN": 1.0})
-        if "UNKNOWN" in {a.upper() for a in u_attrs}:
-            return ClassificationResult(["UNKNOWN"], f"Could not parse response: {raw_text[:200]}", {"UNKNOWN": u_w.get("UNKNOWN", 1.0)})
+        u_attrs, u_w = _merge_keyword_heuristics(text, ["unknown"], {"unknown": 1.0})
+        if "unknown" in {_norm_attr(a) for a in u_attrs}:
+            return ClassificationResult(
+                ["unknown"],
+                f"Could not parse response: {raw_text[:200]}",
+                {"unknown": u_w.get("unknown", 1.0)},
+            )
         return ClassificationResult(u_attrs, f"Could not parse response: {raw_text[:200]}", u_w)
 
-    attrs_upper = [a.upper() for a in model.attributes]
+    attrs_norm = [_norm_attr(a) for a in model.attributes if _norm_attr(a)]
     had_explicit = model.weights is not None and len(model.weights) > 0
     weights = _normalize_weights_from_payload(
         dict(model.weights) if had_explicit else None,
-        attrs_upper,
+        attrs_norm,
     )
-    attrs_upper, weights = _merge_political_keywords(text, attrs_upper, weights)
+    attrs_norm, weights = _merge_keyword_heuristics(text, attrs_norm, weights)
 
-    # Enforce UNKNOWN exclusivity: if the classifier assigns UNKNOWN, drop all other tags.
-    if "UNKNOWN" in {a.upper() for a in attrs_upper}:
-        attrs_upper = ["UNKNOWN"]
-        weights = {"UNKNOWN": weights.get("UNKNOWN", 1.0)}
-    active = _active_attributes(attrs_upper, weights, had_explicit)
+    # Enforce unknown exclusivity: if the classifier assigns unknown, drop all other tags.
+    if "unknown" in attrs_norm:
+        attrs_norm = ["unknown"]
+        weights = {"unknown": weights.get("unknown", 1.0)}
+    active = _active_attributes(attrs_norm, weights, had_explicit)
     return ClassificationResult(active, model.reason, weights)

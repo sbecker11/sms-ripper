@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-List POLITICAL_archive rows with missing or empty classifier tags for human review.
+List message_tags_archive rows with missing or empty classifier tags for human review.
 
 "Untagged" means: NULL / empty / JSON [] / invalid JSON, and optionally only-UNKNOWN
 (see --include-unknown). Use --suggest to run the current classifier on each row and
@@ -37,8 +37,12 @@ import archive  # noqa: E402
 import classifier  # noqa: E402
 from reader import apple_ts_to_datetime  # noqa: E402
 
-TABLE = "POLITICAL_archive"
+TABLE = archive.archive_table_name(archive.DEFAULT_ARCHIVE_KEY)
 COL = archive.CLASSIFIER_ATTRIBUTES_COLUMN
+
+
+def _table_for_conn(conn: sqlite3.Connection) -> str:
+    return archive.require_archive_table(conn, "education")
 
 
 def _parse_tags(raw: object) -> list[str] | None:
@@ -83,7 +87,8 @@ def _fmt_date_utc(ns: object) -> str:
 
 def _table_has_column(conn: sqlite3.Connection, column: str) -> bool:
     # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
-    return column in {r[1] for r in conn.execute(f"PRAGMA table_info({TABLE})").fetchall()}
+    table = _table_for_conn(conn)
+    return column in {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def fetch_candidates(
@@ -120,7 +125,8 @@ def fetch_candidates(
             )
         where = " WHERE (" + " OR ".join(parts) + ")"
 
-    q = f"SELECT {sel} FROM {TABLE} AS p{join}{where} ORDER BY p.date DESC"
+    table = _table_for_conn(conn)
+    q = f"SELECT {sel} FROM {table} AS p{join}{where} ORDER BY p.date DESC"
     if limit is not None and limit > 0:
         q += " LIMIT ?"
         params.append(limit)
@@ -146,7 +152,7 @@ def fetch_candidates(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="List POLITICAL_archive rows with empty or missing classifier tags",
+        description="List message_tags_archive rows with empty or missing classifier tags",
     )
     parser.add_argument("--chat-db", type=Path, default=None, help="Override chat.db path")
     parser.add_argument(
@@ -187,9 +193,10 @@ def main() -> int:
     uri = f"file:{db_path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=60.0)
     try:
+        table = _table_for_conn(conn)
         exists = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-            (TABLE,),
+            (table,),
         ).fetchone()
         if not exists:
             print(f"Table {TABLE} does not exist.", file=sys.stderr)
@@ -197,13 +204,14 @@ def main() -> int:
 
         # Total counts (scan table once for summary)
         def count_review(conn_inner: sqlite3.Connection) -> tuple[int, int]:
-            cols = {r[1] for r in conn_inner.execute(f"PRAGMA table_info({TABLE})").fetchall()}
+            table_inner = _table_for_conn(conn_inner)
+            cols = {r[1] for r in conn_inner.execute(f"PRAGMA table_info({table_inner})").fetchall()}
             if COL not in cols:
-                n = conn_inner.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+                n = conn_inner.execute(f"SELECT COUNT(*) FROM {table_inner}").fetchone()[0]
                 return n, 0
             nu = 0
             nk = 0
-            for (raw,) in conn_inner.execute(f"SELECT {COL} FROM {TABLE}").fetchall():
+            for (raw,) in conn_inner.execute(f"SELECT {COL} FROM {table_inner}").fetchall():
                 if is_review_candidate(raw, include_unknown_only=False):
                     nu += 1
                 elif is_review_candidate(raw, include_unknown_only=True) and not is_review_candidate(
@@ -242,7 +250,7 @@ def main() -> int:
             writer.writeheader()
 
         if not csv_mode:
-            print(f"POLITICAL_archive — rows with empty/missing tags (strict): {strict_total}")
+            print(f"{TABLE} — rows with empty/missing tags (strict): {strict_total}")
             print(
                 f"['UNKNOWN']-only rows (count; use --include-unknown to include in list): {unknown_extra_total}"
             )

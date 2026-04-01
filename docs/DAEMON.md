@@ -1,5 +1,7 @@
 # Background daemon (launchd)
 
+System architecture (tag catalog, policies, archive) is summarized in [FRAMEWORK.md](FRAMEWORK.md).
+
 The **LaunchAgent** `com.smsripper.periodic` runs [`scripts/daemon_cycle.py`](../scripts/daemon_cycle.py) on a fixed interval (default **900 seconds = 15 minutes**) and at **login**. Each cycle is the same *shape* as a manual **`poe political-all`** plus badge cleanup:
 
 1. **`backup_chat_db.py`** — timestamped copy under `backups/`
@@ -124,7 +126,7 @@ Each daemon cycle (step 6) regenerates a **self-contained** political-archive HT
 | **Open / bookmark** | **`file://`** path to **`reports/index.html`**, or **`poe report-open`** (macOS) after **`poe report-generate`**. Self-contained HTML; **no web server**. |
 | **Manual** | **`poe report-generate`** anytime (same script the daemon runs) |
 
-The report lists **`POLITICAL_archive`** rows (newest first). It does **not** replace Messages; it is read-only.
+The report lists **`message_tags_archive`** rows (newest first). It does **not** replace Messages; it is read-only.
 
 ---
 

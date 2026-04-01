@@ -22,17 +22,17 @@ def test_generate_report_html_minimal_db(tmp_path: Path):
     conn.execute("CREATE TABLE handle (rowid INTEGER PRIMARY KEY, id TEXT)")
     conn.execute("INSERT INTO handle (rowid, id) VALUES (1, '+15551234567')")
     conn.execute(
-        "CREATE TABLE POLITICAL_archive ("
+        "CREATE TABLE message_tags_archive ("
         "rowid INTEGER PRIMARY KEY, date INTEGER, text TEXT, handle_id INTEGER, "
         "daemon_cycle_start TEXT, daemon_cycle_pid TEXT, classifier_attributes TEXT)"
     )
     conn.execute(
-        "INSERT INTO POLITICAL_archive (rowid, date, text, handle_id, daemon_cycle_start, daemon_cycle_pid, classifier_attributes) "
-        "VALUES (1, 1000000000000000000, 'hello archive', 1, '2026-03-01T12:00:00Z', '99', '[\"POLITICAL\",\"SPAM\"]')"
+        "INSERT INTO message_tags_archive (rowid, date, text, handle_id, daemon_cycle_start, daemon_cycle_pid, classifier_attributes) "
+        "VALUES (1, 1000000000000000000, 'hello archive', 1, '2026-03-01T12:00:00Z', '99', '[\"education\",\"spam\"]')"
     )
     conn.execute(
-        "INSERT INTO POLITICAL_archive (rowid, date, text, handle_id, daemon_cycle_start, daemon_cycle_pid, classifier_attributes) "
-        "VALUES (2, 1000000000000000001, '', 1, NULL, NULL, '[\"POLITICAL\",\"SPAM\"]')"
+        "INSERT INTO message_tags_archive (rowid, date, text, handle_id, daemon_cycle_start, daemon_cycle_pid, classifier_attributes) "
+        "VALUES (2, 1000000000000000001, '', 1, NULL, NULL, '[\"education\",\"spam\"]')"
     )
     conn.commit()
     conn.close()
@@ -80,14 +80,15 @@ def test_generate_report_html_minimal_db(tmp_path: Path):
     assert "total row(s) in the archives" in text
     assert "Latest 100 archived messages (newest first)" in text
     assert "Archive type" in text
-    assert "POLITICAL" in text and "SPAM" in text
-    assert '<option value="UNKNOWN">UNKNOWN</option>' in text
-    # Empty subject+body: index filter tags match training UI (UNKNOWN only), not stale JSON.
-    assert 'data-archive-types="UNKNOWN"' in text
+    assert "education" in text and "spam" in text
+    assert '<option value="unknown">unknown</option>' in text
+    # Empty subject+body: index filter tags match training UI (unknown only), not stale JSON.
+    assert 'data-archive-types="unknown"' in text
     assert 'data-archive-no-plaintext="1"' in text
     assert 'getAttribute("data-archive-no-plaintext")' in text
     assert "archive-row" in text
     assert "data-archive-types" in text
+    assert 'data-quick-review="1"' in text
     assert "archive-filter-count" in text
     assert "smsRipperArchiveTypeFilter" in text
     assert "archiveTypeFilterSetCookie" in text
@@ -103,13 +104,13 @@ def test_generate_report_html_archive_training_url(tmp_path: Path):
     conn.execute("CREATE TABLE handle (rowid INTEGER PRIMARY KEY, id TEXT)")
     conn.execute("INSERT INTO handle (rowid, id) VALUES (1, '+15551234567')")
     conn.execute(
-        "CREATE TABLE POLITICAL_archive ("
+        "CREATE TABLE message_tags_archive ("
         "rowid INTEGER PRIMARY KEY, date INTEGER, text TEXT, handle_id INTEGER, "
         "classifier_attributes TEXT)"
     )
     conn.execute(
-        "INSERT INTO POLITICAL_archive (rowid, date, text, handle_id, classifier_attributes) "
-        "VALUES (1, 1000000000000000000, 'hello', 1, '[\"POLITICAL\"]')"
+        "INSERT INTO message_tags_archive (rowid, date, text, handle_id, classifier_attributes) "
+        "VALUES (1, 1000000000000000000, 'hello', 1, '[\"education\"]')"
     )
     conn.commit()
     conn.close()
@@ -143,13 +144,13 @@ def test_build_training_server_index_html(tmp_path: Path):
     conn.execute("CREATE TABLE handle (rowid INTEGER PRIMARY KEY, id TEXT)")
     conn.execute("INSERT INTO handle (rowid, id) VALUES (1, '+15551234567')")
     conn.execute(
-        "CREATE TABLE POLITICAL_archive ("
+        "CREATE TABLE message_tags_archive ("
         "rowid INTEGER PRIMARY KEY, date INTEGER, text TEXT, handle_id INTEGER, "
         "classifier_attributes TEXT)"
     )
     conn.execute(
-        "INSERT INTO POLITICAL_archive (rowid, date, text, handle_id, classifier_attributes) "
-        "VALUES (7, 1000000000000000000, 'hello archive', 1, '[\"POLITICAL\"]')"
+        "INSERT INTO message_tags_archive (rowid, date, text, handle_id, classifier_attributes) "
+        "VALUES (7, 1000000000000000000, 'hello archive', 1, '[\"education\"]')"
     )
     conn.commit()
     html_doc = grh.build_training_server_index_html(conn, limit=10, db_path=str(db))
@@ -161,6 +162,8 @@ def test_build_training_server_index_html(tmp_path: Path):
     assert "SMS_RIPPER_ARCHIVE_FULL" not in html_doc
     assert "archive_training_server" in html_doc or "tag-training" in html_doc
     assert "smsRipperArchiveTypeFilter" in html_doc
+    assert '<option value="__quick_review__">Quick review</option>' in html_doc
+    assert 'row.getAttribute("data-quick-review") === "1"' in html_doc
     assert 'href="/CHANGELOG.md"' in html_doc
     assert "footer-changelog" in html_doc
     assert "latest entry" in html_doc and " UTC" in html_doc
@@ -174,19 +177,19 @@ def test_index_empty_text_with_subject_keeps_classifier_tags(tmp_path: Path):
     conn.execute("CREATE TABLE handle (rowid INTEGER PRIMARY KEY, id TEXT)")
     conn.execute("INSERT INTO handle (rowid, id) VALUES (1, '+1')")
     conn.execute(
-        "CREATE TABLE POLITICAL_archive ("
+        "CREATE TABLE message_tags_archive ("
         "rowid INTEGER PRIMARY KEY, date INTEGER, text TEXT, subject TEXT, handle_id INTEGER, "
         "classifier_attributes TEXT)"
     )
     conn.execute(
-        "INSERT INTO POLITICAL_archive (rowid, date, text, subject, handle_id, classifier_attributes) "
-        "VALUES (1, 1000000000000000000, '', 'Shipped', 1, '[\"POLITICAL\"]')"
+        "INSERT INTO message_tags_archive (rowid, date, text, subject, handle_id, classifier_attributes) "
+        "VALUES (1, 1000000000000000000, '', 'Shipped', 1, '[\"education\"]')"
     )
     conn.commit()
     total, rows = grh._fetch_rows(conn, 10)
     conn.close()
     assert total == 1
-    assert rows[0]["archive_types"] == ["POLITICAL"]
+    assert rows[0]["archive_types"] == ["education"]
 
 
 def test_datetime_cell_inner_dash_becomes_open_full_button():

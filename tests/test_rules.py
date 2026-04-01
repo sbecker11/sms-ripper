@@ -17,7 +17,7 @@ def _msg(attrs: list[str]) -> Message:
     )
 
 
-# --- policy=political (default): only POLITICAL is actioned for spam-like tags ---
+# --- policy=political (default): only ``education`` is actioned for spam-like tags ---
 
 
 def test_political_unsubscribe_confirmation_purges_not_archives():
@@ -45,7 +45,7 @@ def test_political_unsubscribe_phrase_in_both_subject_and_body_purges_once():
 
 
 def test_political_unsubscribe_text_prevents_archive_even_if_political_tag():
-    m = _msg(["POLITICAL"])
+    m = _msg(["education"])
     m.text = "You have unsubscribed."
     assert rules.evaluate(m) == ["purge"]
 
@@ -67,12 +67,12 @@ def test_political_spam_and_scam_log_only():
 
 
 def test_political_political_archives_only_when_not_personal():
-    assert rules.evaluate(_msg(["POLITICAL"])) == ["archive"]
-    assert rules.evaluate(_msg(["POLITICAL", "PERSONAL"])) == []
+    assert rules.evaluate(_msg(["education"])) == ["archive"]
+    assert rules.evaluate(_msg(["education", "personal"])) == []
 
 
 def test_political_political_with_spam_uses_political_rule():
-    assert rules.evaluate(_msg(["POLITICAL", "SPAM"])) == ["archive"]
+    assert rules.evaluate(_msg(["education", "spam"])) == ["archive"]
 
 
 def test_political_promo_log_only():
@@ -93,7 +93,7 @@ def test_political_unknown_defaults_to_log_only():
 
 
 def test_political_evaluate_detailed_returns_rule_names():
-    actions, names = rules.evaluate_detailed(_msg(["POLITICAL"]))
+    actions, names = rules.evaluate_detailed(_msg(["education"]))
     assert "archive" in actions
     assert names == ["political"]
 
@@ -125,11 +125,11 @@ def test_spam_policy_scam_block_delete_no_stop():
 
 
 def test_spam_policy_political_only_log_only():
-    assert rules.evaluate(_msg(["POLITICAL"]), policy="spam") == ["log_only"]
+    assert rules.evaluate(_msg(["education"]), policy="spam") == ["log_only"]
 
 
 def test_spam_policy_political_with_spam_uses_spam_rule_not_political():
-    out = rules.evaluate(_msg(["POLITICAL", "SPAM"]), policy="spam")
+    out = rules.evaluate(_msg(["education", "spam"]), policy="spam")
     assert "send_stop" in out
     assert "delete" in out
     assert "archive" not in out

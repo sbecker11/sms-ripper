@@ -66,12 +66,12 @@ daemon-fda-path = "python scripts/print_fda_python.py"
 fda-assist = "python scripts/fda_assist.py"
 # Probe chat.db reads (Python, /bin/cp, sqlite3) — ground truth for Full Disk Access; not a TCC DB reader.
 verify-fda = "python scripts/verify_fda.py"
-# Static HTML report of POLITICAL_archive (daemon runs this at end of each cycle)
+# Static HTML report of message_tags_archive (daemon runs this at end of each cycle)
 report-generate = "python scripts/generate_report_html.py"
 report-open = "open reports/index.html"
-# Local loopback UI to review / re-classify POLITICAL_archive rows (human-in-the-loop); see README
+# Local loopback UI to review / re-classify message_tags_archive rows (human-in-the-loop); see README
 archive-training-server = "python scripts/archive_training_server.py"
-# Re-run classifier on POLITICAL_archive rows; updates classifier_attributes JSON (needs ANTHROPIC_API_KEY)
+# Re-run classifier on message_tags_archive rows; updates classifier_attributes JSON (needs ANTHROPIC_API_KEY)
 reclassify-archive-tags = "python scripts/reclassify_archive_tags.py"
 # List archive rows with empty/unknown tags; optional --suggest to compare with current classifier
 review-untagged-archive = "python scripts/review_untagged_archive.py"

@@ -287,7 +287,7 @@ def main():
         "--policy",
         choices=["political", "spam"],
         default="political",
-        help="Rule set: political (archive POLITICAL non-personal only) or spam (STOP/block/delete for SPAM/SCAM). "
+        help="Rule set: political (archive education non-personal only) or spam (STOP/block/delete for SPAM/SCAM). "
         "Run political first, then spam in a separate pass if desired.",
     )
     parser.add_argument(

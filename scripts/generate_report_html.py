@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Write a self-contained static HTML report of POLITICAL_archive (and summary stats).
+Write a self-contained static HTML report of message_tags_archive (and summary stats).
 
 Designed to run after each daemon cycle; open the file in a browser or bookmark a file:// URL.
 Optional meta-refresh reloads the page periodically while it stays open (picks up new file content).
@@ -32,6 +32,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 import archive_tag_training as att  # noqa: E402
+import archive  # noqa: E402
 import classifier  # noqa: E402
 import config  # noqa: E402
 import html_tz_toggle  # noqa: E402
@@ -39,7 +40,7 @@ from reader import apple_ts_to_datetime  # noqa: E402
 
 DEFAULT_OUTPUT = _REPO / "reports" / "index.html"
 CHANGELOG_PATH = _REPO / "CHANGELOG.md"
-TABLE = "POLITICAL_archive"
+TABLE = archive.archive_table_name(archive.DEFAULT_ARCHIVE_KEY)
 META_REFRESH_SEC = 900  # align with default daemon interval; 0 = disable
 
 # Top-most `## …Z` or `## …Z UTC` section heading (footer shows the same `…Z UTC` text).
@@ -233,12 +234,43 @@ def _parse_classifier_attributes(raw: object) -> list[str]:
     return attrs
 
 
+def _parse_classifier_blob(raw: object) -> tuple[list[str], dict[str, float]]:
+    """Decode archive.classifier_attributes with normalized attrs + weights."""
+    return classifier.decode_classifier_blob(raw)
+
+
+def _is_quick_review_candidate(
+    *,
+    attrs: list[str],
+    weights: dict[str, float],
+    no_plaintext: bool,
+) -> bool:
+    """
+    Quick-review rows are likely ambiguous or require human judgement:
+    - no plaintext / UNKNOWN
+    - conflicting tag combinations
+    - low confidence on active tags
+    """
+    aset = {str(a).strip().lower() for a in attrs if str(a).strip()}
+    if no_plaintext or "unknown" in aset:
+        return True
+    if "legit" in aset and ({"spam", "scam", "education"} & aset):
+        return True
+    if "personal" in aset and ({"spam", "scam"} & aset):
+        return True
+    active_w = [float(weights.get(a, 1.0)) for a in aset]
+    if active_w and max(active_w) < 0.9:
+        return True
+    return False
+
+
 def _archive_table_columns(conn: sqlite3.Connection) -> set[str]:
+    table = _table_name_for_conn(conn)
     return {
         r[0]
         for r in conn.execute(
             "SELECT name FROM pragma_table_info(?)",
-            (TABLE,),
+            (table,),
         )
     }
 
@@ -335,9 +367,11 @@ window.smsRipperOpenArchiveFull = function (rowid) {
       var show = false;
       if (v === "all") show = true;
       else if (v === "__untagged__") show = isUntagged;
-      else if (v === "UNKNOWN")
+      else if (v === "__quick_review__")
+        show = row.getAttribute("data-quick-review") === "1";
+      else if (v === "unknown")
         show =
-          tags.indexOf("UNKNOWN") >= 0 ||
+          tags.indexOf("unknown") >= 0 ||
           row.getAttribute("data-archive-no-plaintext") === "1";
       else show = tags.indexOf(v) >= 0;
       row.style.display = show ? "" : "none";
@@ -380,9 +414,11 @@ window.smsRipperOpenArchiveFull = function (rowid) {
       if (v === "all") show = true;
       else if (v === "__untagged__") show = isUntagged;
       else if (v === "__retrained__") show = retrain.length > 0;
-      else if (v === "UNKNOWN")
+      else if (v === "__quick_review__")
+        show = row.getAttribute("data-quick-review") === "1";
+      else if (v === "unknown")
         show =
-          tags.indexOf("UNKNOWN") >= 0 ||
+          tags.indexOf("unknown") >= 0 ||
           row.getAttribute("data-archive-no-plaintext") === "1";
       else show = tags.indexOf(v) >= 0;
       row.style.display = show ? "" : "none";
@@ -431,7 +467,7 @@ window.smsRipperOpenArchiveFull = function (rowid) {
         # stored JSON while rows look "empty": live classification used RICH_ONLY_PLACEHOLDER (see
         # reader.py), but the archive copies empty message.text from chat.db.
         tag_values = sorted(
-            {t for r in rows for t in (r.get("archive_types") or [])} | {"UNKNOWN"}
+            {t for r in rows for t in (r.get("archive_types") or [])} | {"unknown"}
         )
         has_untagged = any(not (r.get("archive_types") or []) for r in rows)
         type_options = ['<option value="all" selected>All types</option>']
@@ -442,6 +478,7 @@ window.smsRipperOpenArchiveFull = function (rowid) {
         if has_untagged:
             type_options.append('<option value="__untagged__">Untagged</option>')
         if index_variant == "training_server":
+            type_options.append('<option value="__quick_review__">Quick review</option>')
             type_options.append(
                 '<option value="__retrained__">Retrained (training UI)</option>'
             )
@@ -452,6 +489,7 @@ window.smsRipperOpenArchiveFull = function (rowid) {
             tags_attr = html.escape(" ".join(types))
             no_plain = _no_plaintext_for_index(r.get("text"), r.get("subject"))
             no_plain_attr = ' data-archive-no-plaintext="1"' if no_plain else ""
+            quick_attr = ' data-quick-review="1"' if bool(r.get("quick_review")) else ""
             re_at = str(r.get("training_regenerated_at") or "").strip()
             train_attr = html.escape(re_at, quote=True)
             if index_variant == "training_server":
@@ -462,12 +500,12 @@ window.smsRipperOpenArchiveFull = function (rowid) {
                 )
                 row_open = (
                     f'<tr class="archive-row" data-archive-types="{tags_attr}" '
-                    f'data-training-retrained="{train_attr}"{no_plain_attr}>'
+                    f'data-training-retrained="{train_attr}"{no_plain_attr}{quick_attr}>'
                 )
             else:
                 train_cell = ""
                 row_open = (
-                    f'<tr class="archive-row" data-archive-types="{tags_attr}"{no_plain_attr}>'
+                    f'<tr class="archive-row" data-archive-types="{tags_attr}"{no_plain_attr}{quick_attr}>'
                 )
             parts.append(
                 f"{row_open}"
@@ -494,6 +532,7 @@ window.smsRipperOpenArchiveFull = function (rowid) {
             f"{html.escape(generated_at_date)}<br/>{html.escape(generated_at_time)}</span>"
             " · served by <code>archive_training_server</code>; reload this page to refresh from "
             "<code>chat.db</code>"
+            ' · <a href="/tag-catalog">Tag catalog</a>'
         )
         hint_html = ""
     else:
@@ -646,37 +685,44 @@ window.smsRipperOpenArchiveFull = function (rowid) {
 """
 
 
+def _table_name_for_conn(conn: sqlite3.Connection) -> str:
+    return archive.require_archive_table(conn, "education")
+
+
 def _archive_has_cycle_columns(conn: sqlite3.Connection) -> bool:
+    table = _table_name_for_conn(conn)
     names = {
         r[0]
         for r in conn.execute(
             "SELECT name FROM pragma_table_info(?)",
-            (TABLE,),
+            (table,),
         )
     }
     return "daemon_cycle_start" in names and "daemon_cycle_pid" in names
 
 
 def _archive_has_classifier_attributes(conn: sqlite3.Connection) -> bool:
+    table = _table_name_for_conn(conn)
     names = {
         r[0]
         for r in conn.execute(
             "SELECT name FROM pragma_table_info(?)",
-            (TABLE,),
+            (table,),
         )
     }
     return "classifier_attributes" in names
 
 
 def _fetch_rows(conn: sqlite3.Connection, limit: int) -> tuple[int, list[dict[str, object]]]:
+    table = _table_name_for_conn(conn)
     cur = conn.execute(
         f"SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (TABLE,),
+        (table,),
     )
     if not cur.fetchone():
         return 0, []
 
-    total = int(conn.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0])
+    total = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
     cols = _archive_table_columns(conn)
     has_subject = "subject" in cols
     has_cycle = _archive_has_cycle_columns(conn)
@@ -696,7 +742,7 @@ def _fetch_rows(conn: sqlite3.Connection, limit: int) -> tuple[int, list[dict[st
     # Join handle when both tables exist
     q = f"""
     SELECT p.rowid AS rowid, p.date AS date, p.text AS text{subject_sql_p}, h.id AS handle{cycle_sql_p}{classifier_sql_p}
-    FROM {TABLE} AS p
+    FROM {table} AS p
     LEFT JOIN handle AS h ON p.handle_id = h.rowid
     ORDER BY p.date DESC
     LIMIT ?
@@ -706,7 +752,7 @@ def _fetch_rows(conn: sqlite3.Connection, limit: int) -> tuple[int, list[dict[st
     except sqlite3.Error:
         q2 = f"""
         SELECT rowid, date, text{subject_sql_bare}, NULL AS handle{cycle_sql_bare}{classifier_sql_bare}
-        FROM {TABLE} ORDER BY date DESC LIMIT ?
+        FROM {table} ORDER BY date DESC LIMIT ?
         """
         cur = conn.execute(q2, (limit,))
     out: list[dict[str, object]] = []
@@ -732,16 +778,24 @@ def _fetch_rows(conn: sqlite3.Connection, limit: int) -> tuple[int, list[dict[st
             base["daemon_cycle_start"] = None
             base["daemon_cycle_pid"] = None
         if has_classifier:
-            parsed = _parse_classifier_attributes(row[idx])
+            parsed, parsed_w = _parse_classifier_blob(row[idx])
             idx += 1
             if _no_plaintext_for_index(base["text"], base.get("subject")):
                 # Match training UI: empty subject+body → effective tags UNKNOWN only (ignore
-                # stale POLITICAL/SPAM from legacy rich-only heuristic in stored JSON).
-                base["archive_types"] = ["UNKNOWN"]
+                # stale education/spam from legacy rich-only heuristic in stored JSON).
+                base["archive_types"] = ["unknown"]
+                base["archive_weights"] = {"unknown": 1.0}
             else:
                 base["archive_types"] = parsed
+                base["archive_weights"] = parsed_w
         else:
             base["archive_types"] = []
+            base["archive_weights"] = {}
+        base["quick_review"] = _is_quick_review_candidate(
+            attrs=list(base.get("archive_types") or []),
+            weights=dict(base.get("archive_weights") or {}),
+            no_plaintext=_no_plaintext_for_index(base["text"], base.get("subject")),
+        )
         out.append(base)
     return total, out
 
@@ -788,7 +842,7 @@ def build_training_server_index_html(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate static HTML report for POLITICAL_archive")
+    parser = argparse.ArgumentParser(description="Generate static HTML report for message_tags_archive")
     parser.add_argument("--chat-db", type=Path, default=None, help="Override chat.db path")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Output HTML path")
     parser.add_argument("--limit", type=int, default=100, help="Max rows in table")

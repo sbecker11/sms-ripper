@@ -48,6 +48,7 @@ class Settings(BaseSettings):
         le=32,
         validation_alias="CLASSIFY_MAX_WORKERS",
     )
+    reviewer_id: str = Field(default="", validation_alias="SMS_RIPPER_REVIEWER_ID")
 
     @field_validator("chat_db_path", mode="before")
     @classmethod
@@ -67,6 +68,7 @@ CHAT_DB_PATH = settings.chat_db_path
 STOP_REPLY_TEXT = settings.stop_reply_text
 LOG_FILE = settings.log_file
 CLASSIFY_MAX_WORKERS = settings.classify_max_workers
+REVIEWER_ID = settings.reviewer_id
 DRY_RUN = False
 # True while main.process_once runs with --quiet (redacted identifiers in action logs; minimal INFO).
 QUIET = False

@@ -1,6 +1,6 @@
 # Testing
 
-Tests live under `tests/` and use **pytest**. They avoid touching your real `chat.db`, the network (except mocked HTTP for the classifier), and AppleScript where possible.
+Tests live under `tests/` and use **pytest**. They avoid touching your real `chat.db`, the network (except mocked HTTP for the classifier), and AppleScript where possible. For how the app is structured outside tests, see [FRAMEWORK.md](FRAMEWORK.md).
 
 ## Prerequisites
 
@@ -136,7 +136,7 @@ The `htmlcov/` directory is generated locally; add it to `.gitignore` if it is n
 | Rules      | `tests/test_rules.py`      | `rules.evaluate` for attribute → action mapping                                                     |
 | Classifier | `tests/test_classifier.py` | Mocked `urllib` responses, HTTP errors, missing API key                                             |
 | Actions    | `tests/test_actions.py`    | Blocklist, dry-run, mocked `subprocess` / AppleScript paths; **archive-before-delete** execution order |
-| Archive    | `tests/test_archive.py`    | `POLITICAL_archive` copy/delete on a temp DB                                                       |
+| Archive    | `tests/test_archive.py`    | `message_tags_archive` copy/delete on a temp DB                                                    |
 | Dry preview | `tests/test_dry_run_recent.py` | Subprocess smoke tests for `scripts/dry_run_recent.py`                                         |
 | Main       | `tests/test_main.py`       | `process_once` branches with mocked reader/classifier/actions; CLI flags and loop behavior          |
 
