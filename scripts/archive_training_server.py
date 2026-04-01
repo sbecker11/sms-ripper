@@ -651,15 +651,15 @@ def _api_tag_catalog_mutate(conn: sqlite3.Connection, body: dict[str, object]) -
         )
         conn.commit()
         return
-    if op == "rename":
-        fr = str(body.get("from") or body.get("old") or "").strip()
-        to = str(body.get("to") or body.get("new") or "").strip()
-        if not fr or not to:
-            raise ValueError("rename requires from and to")
-        att.rename_classifier_tag(conn, fr, to)
+    if op == "merge":
+        fr = str(body.get("from") or body.get("source") or "").strip()
+        into = str(body.get("into") or body.get("target") or "").strip()
+        if not fr or not into:
+            raise ValueError("merge requires from and into (existing target tag)")
+        att.merge_classifier_tag_into(conn, fr, into)
         conn.commit()
         return
-    raise ValueError(f"unknown op {op!r} (use add, update, rename)")
+    raise ValueError(f"unknown op {op!r} (use add, update, merge)")
 
 
 _TAG_CATALOG_HTML = """<!DOCTYPE html>
@@ -691,7 +691,7 @@ _TAG_CATALOG_HTML = """<!DOCTYPE html>
   <h1>Tag catalog</h1>
   <p style="font-size:0.85rem;color:#555">Active tags drive the classifier prompt and training UI.
   <strong>Archive</strong> marks tags that copy rows into <code>message_tags_archive</code> when present
-  (first match in attribute order). Renaming updates training/guard tables only — not stored JSON on old rows.</p>
+  (first match in attribute order). <strong>Merge into</strong> folds the source tag into an <em>existing</em> tag: rewrites <code>classifier_attributes</code> on archive tables, merges training rows and guards, then removes the source from the catalog. To use a <em>new</em> key, add that tag first, then merge the old tag into it.</p>
   <p class="err" id="msg" hidden></p>
   <p class="ok" id="ok" hidden></p>
   <div id="tbl"></div>
@@ -723,14 +723,14 @@ _TAG_CATALOG_HTML = """<!DOCTYPE html>
     return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   }
   function render(rows) {
-    var h = "<table><thead><tr><th>Tag</th><th>Active</th><th>Archive</th><th>Rename to</th><th></th></tr></thead><tbody>";
+    var h = "<table><thead><tr><th>Tag</th><th>Active</th><th>Archive</th><th>Rename to</th><th></th><th>Merge into</th><th></th></tr></thead><tbody>";
     rows.forEach(function (r) {
       var tag = r.tag;
       h += "<tr><td class=\\"mono\\">" + esc(tag) + "</td>";
       h += "<td><input type=\\"checkbox\\" data-tag=\\"" + esc(tag) + "\\" class=\\"cb-act\\" " + (r.active ? "checked" : "") + " /></td>";
       h += "<td><input type=\\"checkbox\\" data-tag=\\"" + esc(tag) + "\\" class=\\"cb-arch\\" " + (r.archive_enabled ? "checked" : "") + " /></td>";
-      h += "<td><input type=\\"text\\" class=\\"rn-to\\" data-tag=\\"" + esc(tag) + "\\" placeholder=\\"new_key\\" /></td>";
-      h += "<td><button type=\\"button\\" class=\\"btn-rn\\" data-tag=\\"" + esc(tag) + "\\">Rename</button></td></tr>";
+      h += "<td><input type=\\"text\\" class=\\"mg-into\\" data-tag=\\"" + esc(tag) + "\\" placeholder=\\"existing tag\\" /></td>";
+      h += "<td><button type=\\"button\\" class=\\"btn-mg\\" data-tag=\\"" + esc(tag) + "\\">Merge</button></td></tr>";
     });
     h += "</tbody></table>";
     tblEl.innerHTML = h;
@@ -746,14 +746,15 @@ _TAG_CATALOG_HTML = """<!DOCTYPE html>
         post({ op: "update", tag: t, archive_enabled: el.checked });
       });
     });
-    tblEl.querySelectorAll(".btn-rn").forEach(function (el) {
+    tblEl.querySelectorAll(".btn-mg").forEach(function (el) {
       el.addEventListener("click", function () {
         var t = el.getAttribute("data-tag");
         var tr = el.closest("tr");
-        var inp = tr ? tr.querySelector(".rn-to") : null;
-        var to = (inp && inp.value || "").trim();
-        if (!to) { showErr("Enter new tag name"); return; }
-        post({ op: "rename", from: t, to: to }).then(function () { if (inp) inp.value = ""; });
+        var inp = tr ? tr.querySelector(".mg-into") : null;
+        var into = (inp && inp.value || "").trim();
+        if (!into) { showErr("Enter existing tag to merge into"); return; }
+        if (into === t) { showErr("Cannot merge a tag into itself"); return; }
+        post({ op: "merge", from: t, into: into }).then(function () { if (inp) inp.value = ""; });
       });
     });
   }

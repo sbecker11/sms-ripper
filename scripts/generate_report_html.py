@@ -254,9 +254,7 @@ def _is_quick_review_candidate(
     aset = {str(a).strip().lower() for a in attrs if str(a).strip()}
     if no_plaintext or "unknown" in aset:
         return True
-    if "legit" in aset and ({"spam", "scam", "education"} & aset):
-        return True
-    if "personal" in aset and ({"spam", "scam"} & aset):
+    if "personal" in aset and "spam" in aset:
         return True
     active_w = [float(weights.get(a, 1.0)) for a in aset]
     if active_w and max(active_w) < 0.9:

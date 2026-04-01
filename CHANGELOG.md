@@ -4,6 +4,48 @@ All notable changes to this project are documented here. Entries use **UTC** tim
 
 ---
 
+## 2026-04-01T02:00:00Z UTC
+
+- **Tag catalog UI / API:** Removed **rename**; only **merge** remains for changing tag keys. Use **Add** for the target name, then **Merge into**. Removed ``rename_classifier_tag`` and ``tag_catalog.rename_catalog_key``.
+
+---
+
+## 2026-04-01T01:00:00Z UTC
+
+- **Tag merge:** **`merge_classifier_tag_into`** (and training-server catalog API **`op: "merge"`** with **`from`** / **`into`**) merges source tag **A** into existing **B**: rewrites **`classifier_attributes`** on all tables that have that column, merges training rows and tag guards (snapshots/events), then deletes **A** from **`sms_ripper_tag_catalog`**. **`classifier.merge_tag_in_classifier_blob`** handles list and dict JSON shapes. **`tag_catalog.delete_catalog_tag`** supports removal after merge. Reserved **`unknown`** cannot be merged away.
+
+---
+
+## 2026-04-01T00:00:00Z UTC
+
+- **Tags:** Dropped **`scam`** from the default catalog; **`spam`** is the single bucket for junk and phishing. **`rules.py`** (`spam` policy) still matches **legacy** `scam`-only attributes via **`legacy_scam_only`** (block/delete, no STOP) so old archived JSON keeps working.
+
+---
+
+## 2026-03-31T23:15:00Z UTC
+
+- **Tags:** Removed **`legit`** from the default catalog and from **`rules.py`** (no dedicated “legitimate” rule). Use **`personal`**, **`transactional`**, or **`unknown`** as appropriate. Archive report quick-review no longer uses a **`legit`**-vs-bulk conflict heuristic.
+
+---
+
+## 2026-03-31T22:30:00Z UTC
+
+- **Default tag catalog:** Reduced the seed to **eight** common SMS categories: **`education`** (still archive-enabled for the default political rule), **`personal`**, **`transactional`**, **`promo`**, **`social`**, **`spam`**, **`stop`**, **`unknown`** ( **`scam`** merged into **`spam`** for new classifications). Removed the long topic/Yahoo-style expansion; add finer tags via the catalog UI if you want them back.
+
+---
+
+## 2026-03-31T20:00:00Z UTC
+
+- **Default tag catalog:** Seed **Yahoo Mail** inbox-style tags **`primary`**, **`offers`**, **`social`**, and **`newsletters`** (from [Yahoo Help SLN36712](https://help.yahoo.com/kb/SLN36712.html), New Yahoo Mail categories). **`promo`** stays for existing rules; scope is similar to Yahoo **Offers**.
+
+---
+
+## 2026-03-31T18:00:00Z UTC
+
+- **Default tag catalog:** Seed **`politics`**, **`fashion`**, **`local_news`**, **`domestic_news`**, **`global_news`**, **`religion`**, **`sports`**, **`children`**, and **`food`** (active, not archive-enabled by default) alongside **`education`**; default physical archive stays **`education`** → **`message_tags_archive`** unless you enable archive for another tag in the catalog UI (separate **`<tag>_archive`** table). Quick-review heuristics treat **`legit`** combined with those topic tags (plus **`spam`**, **`scam`**, **`education`**) as ambiguous. (Replaces a single **`news`** seed with three geographic scopes.)
+
+---
+
 ## 2026-03-31T12:00:00Z UTC
 
 - **Canonical tag strings:** Classifier output, `classifier_attributes` JSON, archive report dropdown/options, and training UI now use **lowercase** tag keys (e.g. `unknown`, `spam`, `education`) consistently with the SQLite tag catalog. Legacy uppercase values in stored JSON are still accepted on read and normalized.

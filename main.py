@@ -6,7 +6,7 @@ SMS Agent — reads recent iMessages, classifies them, and takes action.
 Usage:
     python main.py               # run once (default policy: political)
     python main.py --dry-run     # preview actions without executing
-    python main.py --policy spam   # second pass: SPAM / SCAM (optional; uses STOP/block/delete)
+    python main.py --policy spam   # second pass: SPAM / STOP (optional; uses STOP/block/delete)
     python main.py --loop 60       # run every 60 seconds
     python main.py --limit 100     # process last 100 messages
     python main.py --lookback 120  # look back 120 minutes
@@ -287,7 +287,7 @@ def main():
         "--policy",
         choices=["political", "spam"],
         default="political",
-        help="Rule set: political (archive education non-personal only) or spam (STOP/block/delete for SPAM/SCAM). "
+        help="Rule set: political (archive education non-personal only) or spam (STOP/block/delete for SPAM/STOP; legacy scam-only tags still handled). "
         "Run political first, then spam in a separate pass if desired.",
     )
     parser.add_argument(

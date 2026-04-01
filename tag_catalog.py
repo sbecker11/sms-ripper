@@ -2,8 +2,9 @@ from __future__ import annotations
 
 """
 Per-database tag vocabulary. Tags are **user-defined** rows (lowercase keys), not a fixed
-global enum. ``DEFAULT_TAG_ROWS`` seeds a typical setup; you may add rows (e.g. ``religion``)
-or omit defaults—keep ``rules.py`` / ``classifier.py`` heuristics consistent with your keys.
+global enum. ``DEFAULT_TAG_ROWS`` seeds **eight** common SMS buckets (personal, transactional,
+promotional, civic blast, abuse/opt-out, trust signals, social alerts, unknown); add rows in
+the catalog UI or here as needed—keep ``rules.py`` / ``classifier.py`` heuristics consistent.
 """
 
 import re
@@ -14,15 +15,17 @@ TABLE_TAG_CATALOG = "sms_ripper_tag_catalog"
 # Lowercase keys in DB; flexible but safe for SQL identifiers as unquoted literals.
 TAG_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,62}$")
 
-# Default seed only—examples of tags this repo expects unless you change the catalog.
+# Default seed: eight high-volume SMS categories. ``education`` stays archive-enabled for this
+# repo’s political rule; everything else is active for classification only unless you enable
+# archive in the catalog UI.
 DEFAULT_TAG_ROWS: tuple[tuple[str, int, int], ...] = (
-    ("education", 1, 1),
-    ("spam", 1, 0),
-    ("stop", 1, 0),
-    ("scam", 1, 0),
-    ("promo", 1, 0),
-    ("legit", 1, 0),
-    ("personal", 1, 0),
+    ("education", 1, 1),  # civic / PAC-style bulk; ``rules.py`` political archive
+    ("personal", 1, 0),  # 1:1 from someone you know
+    ("transactional", 1, 0),  # OTP/2FA, banks, shipping, appointments, receipts
+    ("promo", 1, 0),  # marketing / deals (``rules.py`` promo_only)
+    ("social", 1, 0),  # social apps: alerts, invites, “someone commented”, etc.
+    ("spam", 1, 0),  # unsolicited junk, phishing, and cold outreach (single bucket)
+    ("stop", 1, 0),  # opt-out / STOP intent
     ("unknown", 1, 0),
 )
 
@@ -139,27 +142,24 @@ def set_tag_flags(
     )
 
 
-def rename_catalog_key(conn: sqlite3.Connection, old_key: str, new_key: str) -> None:
-    """Rename primary key in catalog only (caller updates dependent tables)."""
-    ok = normalize_tag(old_key)
-    nk = validate_new_tag_key(new_key)
-    if ok == nk:
-        return
-    if ok == "unknown":
-        raise ValueError("Renaming reserved tag 'unknown' is not supported")
+def delete_catalog_tag(conn: sqlite3.Connection, tag_raw: str) -> None:
+    """
+    Remove one row from the tag catalog. Refuses ``unknown`` and the last remaining active tag.
+    """
+    key = normalize_tag(tag_raw)
+    if not key:
+        raise ValueError("Missing tag")
+    if key == "unknown":
+        raise ValueError("Cannot delete reserved tag 'unknown'")
     ensure_tag_catalog(conn)
-    if not conn.execute(
-        f"SELECT 1 FROM {TABLE_TAG_CATALOG} WHERE tag = ?", (ok,)
-    ).fetchone():
-        raise ValueError(f"Unknown tag: {ok!r}")
-    if conn.execute(
-        f"SELECT 1 FROM {TABLE_TAG_CATALOG} WHERE tag = ?", (nk,)
-    ).fetchone():
-        raise ValueError(f"Tag already exists: {nk!r}")
-    conn.execute(
-        f"UPDATE {TABLE_TAG_CATALOG} SET tag = ? WHERE tag = ?",
-        (nk, ok),
-    )
+    row = conn.execute(
+        f"SELECT active FROM {TABLE_TAG_CATALOG} WHERE tag = ?", (key,)
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Unknown tag: {key!r}")
+    if int(row[0] or 0) == 1 and count_active_tags(conn) <= 1:
+        raise ValueError("Cannot delete the last active tag")
+    conn.execute(f"DELETE FROM {TABLE_TAG_CATALOG} WHERE tag = ?", (key,))
 
 
 def ensure_tag_catalog(conn: sqlite3.Connection) -> None:

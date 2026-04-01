@@ -91,7 +91,7 @@ def test_archive_message_no_tag_returns_false():
         text="x",
         is_from_me=False,
         date=None,
-        attributes=["LEGIT"],
+        attributes=["personal"],
     )
     assert archive.archive_message(msg) is False
 
@@ -207,7 +207,7 @@ def test_purge_live_message_removes_row_without_archive(
         text="You have unsubscribed.",
         is_from_me=False,
         date=None,
-        attributes=["LEGIT"],
+        attributes=["personal"],
     )
     assert archive.purge_live_message(msg) is True
 

@@ -164,7 +164,7 @@ def main() -> int:
         "--policy",
         choices=["political", "spam"],
         default="political",
-        help="Rule set: political (unsub text → purge; education → archive) or spam (SPAM/STOP/SCAM).",
+        help="Rule set: political (unsub text → purge; education → archive) or spam (SPAM/STOP; legacy scam-only).",
     )
     args = parser.parse_args()
 

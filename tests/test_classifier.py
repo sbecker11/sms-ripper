@@ -40,7 +40,7 @@ class _FakeResponse:
 
 def test_classify_message_skips_non_text_content_blocks(monkeypatch):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
-    inner = json.dumps({"attributes": ["legit"], "reason": "ok"})
+    inner = json.dumps({"attributes": ["personal"], "reason": "ok"})
     outer = {
         "id": "msg_1",
         "type": "message",
@@ -56,14 +56,14 @@ def test_classify_message_skips_non_text_content_blocks(monkeypatch):
     raw = json.dumps(outer).encode()
     with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
         res = classifier.classify_message("hi")
-    assert res.attributes == ["legit"]
+    assert res.attributes == ["personal"]
     assert res.reason == "ok"
-    assert res.weights.get("legit") == 1.0
+    assert res.weights.get("personal") == 1.0
 
 
 def test_classify_message_includes_human_guidance_in_request(monkeypatch):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
-    inner = json.dumps({"attributes": ["legit"], "reason": "ok"})
+    inner = json.dumps({"attributes": ["personal"], "reason": "ok"})
     raw = json.dumps(_anthropic_response_payload(inner)).encode()
     captured: list[dict] = []
 
@@ -74,13 +74,13 @@ def test_classify_message_includes_human_guidance_in_request(monkeypatch):
     with patch.object(classifier.urllib.request, "urlopen", side_effect=capture_urlopen):
         classifier.classify_message(
             "plain body",
-            human_guidance="Human says treat as LEGIT.",
+            human_guidance="Human says treat as personal.",
         )
     assert captured
     user = captured[0]["messages"][0]["content"]
     assert "plain body" in user
     assert "Human reviewer guidance" in user
-    assert "Human says treat as LEGIT." in user
+    assert "Human says treat as personal." in user
 
 
 def test_classify_message_parses_json(monkeypatch):
@@ -139,13 +139,13 @@ def test_classify_message_rich_placeholder_only_skips_http_unknown():
 def test_classify_message_subject_plus_rich_placeholder_calls_api(monkeypatch):
     """MMS subject + placeholder body still has usable plaintext for the model."""
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
-    inner = json.dumps({"attributes": ["legit"], "reason": "ok"})
+    inner = json.dumps({"attributes": ["personal"], "reason": "ok"})
     raw = json.dumps(_anthropic_response_payload(inner)).encode()
     combined = f"Shipped\n{reader.RICH_ONLY_PLACEHOLDER}"
     with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)) as m:
         res = classifier.classify_message(combined)
     m.assert_called_once()
-    assert res.attributes == ["legit"]
+    assert res.attributes == ["personal"]
 
 
 def test_classify_message_empty_text_returns_unknown_skips_http():
@@ -166,24 +166,24 @@ def test_classify_message_empty_text_returns_unknown_skips_http():
 
 def test_classify_message_empty_text_with_human_guidance_still_calls_api(monkeypatch):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
-    inner = json.dumps({"attributes": ["legit"], "reason": "from guidance"})
+    inner = json.dumps({"attributes": ["personal"], "reason": "from guidance"})
     raw = json.dumps(_anthropic_response_payload(inner)).encode()
     with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)) as m:
         res = classifier.classify_message("", human_guidance="one-to-one from bank")
     m.assert_called_once()
-    assert res.attributes == ["legit"]
+    assert res.attributes == ["personal"]
 
 
 def test_classify_message_adds_political_for_white_house(monkeypatch):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
-    inner = json.dumps({"attributes": ["legit"], "reason": "ok"})
+    inner = json.dumps({"attributes": ["personal"], "reason": "ok"})
     raw = json.dumps(_anthropic_response_payload(inner)).encode()
 
     with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
         res = classifier.classify_message("News from the White House")
 
     assert "education" in res.attributes
-    assert "legit" in res.attributes
+    assert "personal" in res.attributes
     lo, hi = classifier.keyword_heuristic_weight_bounds("education")
     assert lo <= res.weights["education"] <= hi
 

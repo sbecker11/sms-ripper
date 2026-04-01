@@ -21,7 +21,7 @@ def _msg(attrs: list[str]) -> Message:
 
 
 def test_political_unsubscribe_confirmation_purges_not_archives():
-    m = _msg(["LEGIT"])
+    m = _msg(["personal"])
     m.text = "You have unsubscribed from alerts."
     assert rules.evaluate(m) == ["purge"]
 
@@ -38,7 +38,7 @@ def test_political_delayed_unsubscribe_phrases_purge():
 
 
 def test_political_unsubscribe_phrase_in_both_subject_and_body_purges_once():
-    m = _msg(["LEGIT"])
+    m = _msg(["personal"])
     m.subject = "You have been unsubscribed"
     m.text = "You have been unsubscribed. Reply HELP for help."
     assert rules.evaluate(m) == ["purge"]
@@ -83,9 +83,12 @@ def test_political_promo_with_spam_log_only():
     assert rules.evaluate(_msg(["PROMO", "SPAM"])) == ["log_only"]
 
 
-def test_political_legit_and_personal_no_actions():
-    assert rules.evaluate(_msg(["LEGIT"])) == []
+def test_political_personal_no_actions():
     assert rules.evaluate(_msg(["PERSONAL"])) == []
+
+
+def test_political_transactional_defaults_to_log_only():
+    assert rules.evaluate(_msg(["transactional"])) == ["log_only"]
 
 
 def test_political_unknown_defaults_to_log_only():

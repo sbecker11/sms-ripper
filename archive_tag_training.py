@@ -6,9 +6,10 @@ Used by ``scripts/archive_training_server.py``. Tables are created on first serv
 
 from __future__ import annotations
 
+import math
+import re
 import sqlite3
 from datetime import datetime, timezone
-import math
 from typing import Final
 
 import archive as archive_mod
@@ -83,41 +84,175 @@ def coerce_apple_timestamp_ns(value: object | None) -> int | None:
             return None
 
 
-def rename_classifier_tag(conn: sqlite3.Connection, old_tag: str, new_tag: str) -> None:
+def _merge_keyword_fields(a: object | None, b: object | None) -> str:
+    lines: list[str] = []
+    seen: set[str] = set()
+    for blob in (a, b):
+        if not blob:
+            continue
+        s = coerce_str_field(blob)
+        for ln in s.splitlines():
+            t = ln.strip()
+            if t and t not in seen:
+                lines.append(t)
+                seen.add(t)
+    return "\n".join(lines)
+
+
+def _tables_with_classifier_attributes_column(conn: sqlite3.Connection) -> list[str]:
+    col = archive_mod.CLASSIFIER_ATTRIBUTES_COLUMN
+    out: list[str] = []
+    for (t,) in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    ):
+        if not isinstance(t, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            continue
+        if conn.execute(
+            "SELECT 1 FROM pragma_table_info(?) WHERE name = ? LIMIT 1",
+            (t, col),
+        ).fetchone():
+            out.append(t)
+    return out
+
+
+def _rewrite_archive_classifier_blobs_for_merge(
+    conn: sqlite3.Connection, old_c: str, new_c: str
+) -> int:
+    col = archive_mod.CLASSIFIER_ATTRIBUTES_COLUMN
+    qcol = archive_mod._quote_ident(col)
+    n = 0
+    for tbl in _tables_with_classifier_attributes_column(conn):
+        qtbl = archive_mod._quote_ident(tbl)
+        cur = conn.execute(
+            f"SELECT rowid, {qcol} FROM {qtbl} WHERE {qcol} IS NOT NULL AND TRIM({qcol}) != ''"
+        )
+        for rowid, raw in cur.fetchall():
+            blob, changed = classifier.merge_tag_in_classifier_blob(raw, old_c, new_c)
+            if changed and blob is not None:
+                conn.execute(
+                    f"UPDATE {qtbl} SET {qcol} = ? WHERE rowid = ?",
+                    (blob, rowid),
+                )
+                n += 1
+    return n
+
+
+def _merge_training_rows_for_merge(conn: sqlite3.Connection, old_c: str, new_c: str) -> None:
+    conn.execute(
+        f"""
+        DELETE FROM {TABLE_TRAINING}
+        WHERE tag = ? AND archive_rowid IN (
+            SELECT archive_rowid FROM {TABLE_TRAINING} WHERE tag = ?
+        )
+        """,
+        (old_c, new_c),
+    )
+    conn.execute(
+        f"UPDATE {TABLE_TRAINING} SET tag = ? WHERE tag = ?",
+        (new_c, old_c),
+    )
+
+
+def _merge_tag_guards_for_merge(conn: sqlite3.Connection, old_c: str, new_c: str) -> None:
+    ro = conn.execute(
+        f"SELECT include_keywords, exclude_keywords FROM {TABLE_TAG_GUARDS} WHERE tag = ?",
+        (old_c,),
+    ).fetchone()
+    if not ro:
+        return
+    rn = conn.execute(
+        f"SELECT include_keywords, exclude_keywords FROM {TABLE_TAG_GUARDS} WHERE tag = ?",
+        (new_c,),
+    ).fetchone()
+    now_iso = utc_now_iso()
+    if rn:
+        inc = _merge_keyword_fields(rn[0], ro[0])
+        exc = _merge_keyword_fields(rn[1], ro[1])
+        conn.execute(
+            f"""
+            UPDATE {TABLE_TAG_GUARDS}
+            SET include_keywords = ?, exclude_keywords = ?, updated_at = ?
+            WHERE tag = ?
+            """,
+            (inc, exc, now_iso, new_c),
+        )
+        conn.execute(f"DELETE FROM {TABLE_TAG_GUARDS} WHERE tag = ?", (old_c,))
+    else:
+        conn.execute(
+            f"UPDATE {TABLE_TAG_GUARDS} SET tag = ?, updated_at = ? WHERE tag = ?",
+            (new_c, now_iso, old_c),
+        )
+
+
+def _merge_snapshots_for_merge(conn: sqlite3.Connection, old_c: str, new_c: str) -> None:
+    rows = conn.execute(
+        f"SELECT id, version FROM {TABLE_TAG_GUARD_SNAPSHOTS} WHERE tag = ?",
+        (old_c,),
+    ).fetchall()
+    for sid, ver in rows:
+        clash = conn.execute(
+            f"""
+            SELECT 1 FROM {TABLE_TAG_GUARD_SNAPSHOTS}
+            WHERE tag = ? AND version = ? LIMIT 1
+            """,
+            (new_c, ver),
+        ).fetchone()
+        if clash:
+            conn.execute(
+                f"DELETE FROM {TABLE_TAG_GUARD_SNAPSHOTS} WHERE id = ?", (sid,)
+            )
+        else:
+            conn.execute(
+                f"UPDATE {TABLE_TAG_GUARD_SNAPSHOTS} SET tag = ? WHERE id = ?",
+                (new_c, sid),
+            )
+
+
+def merge_classifier_tag_into(
+    conn: sqlite3.Connection, source_tag: str, target_tag: str
+) -> int:
     """
-    Rename a tag in the catalog and all training/guard tables.
-    Does not rewrite classifier_attributes JSON on archived rows.
-    Caller should commit. Uses a savepoint so it nests safely under an open transaction.
+    Merge catalog tag **source_tag** (A) into **target_tag** (B): rewrite ``classifier_attributes``
+    JSON on every table that has that column, fold training and guard rows into **B**, then
+    remove **A** from ``sms_ripper_tag_catalog``. **B** must already exist. Reserved tag
+    **unknown** cannot be merged away.
+
+    Returns the number of archive rows whose ``classifier_attributes`` cell was rewritten.
+    Caller should **commit**. Uses a savepoint for atomicity.
     """
     ensure_training_tables(conn)
-    old_c = tag_catalog.normalize_tag(old_tag)
-    new_c = tag_catalog.normalize_tag(new_tag)
-    conn.execute("SAVEPOINT tag_rename")
+    old_c = tag_catalog.normalize_tag(source_tag)
+    new_c = tag_catalog.normalize_tag(target_tag)
+    if not old_c or not new_c:
+        raise ValueError("source and target tags are required")
+    if old_c == new_c:
+        return 0
+    if old_c == "unknown":
+        raise ValueError("Cannot merge away reserved tag 'unknown'")
+    if not conn.execute(
+        f"SELECT 1 FROM {tag_catalog.TABLE_TAG_CATALOG} WHERE tag = ?", (new_c,)
+    ).fetchone():
+        raise ValueError(f"Merge target does not exist in catalog: {new_c!r}")
+    if not conn.execute(
+        f"SELECT 1 FROM {tag_catalog.TABLE_TAG_CATALOG} WHERE tag = ?", (old_c,)
+    ).fetchone():
+        raise ValueError(f"Unknown source tag: {old_c!r}")
+    conn.execute("SAVEPOINT merge_tag_into")
     try:
-        tag_catalog.rename_catalog_key(conn, old_tag, new_tag)
-        for q, params in (
-            (
-                f"UPDATE {TABLE_TRAINING} SET tag = ? WHERE tag = ?",
-                (new_c, old_c),
-            ),
-            (
-                f"UPDATE {TABLE_TAG_GUARDS} SET tag = ? WHERE tag = ?",
-                (new_c, old_c),
-            ),
-            (
-                f"UPDATE {TABLE_TAG_GUARD_EVENTS} SET tag = ? WHERE tag = ?",
-                (new_c, old_c),
-            ),
-            (
-                f"UPDATE {TABLE_TAG_GUARD_SNAPSHOTS} SET tag = ? WHERE tag = ?",
-                (new_c, old_c),
-            ),
-        ):
-            conn.execute(q, params)
-        conn.execute("RELEASE SAVEPOINT tag_rename")
+        n_blob = _rewrite_archive_classifier_blobs_for_merge(conn, old_c, new_c)
+        conn.execute(
+            f"UPDATE {TABLE_TAG_GUARD_EVENTS} SET tag = ? WHERE tag = ?",
+            (new_c, old_c),
+        )
+        _merge_snapshots_for_merge(conn, old_c, new_c)
+        _merge_tag_guards_for_merge(conn, old_c, new_c)
+        _merge_training_rows_for_merge(conn, old_c, new_c)
+        tag_catalog.delete_catalog_tag(conn, old_c)
+        conn.execute("RELEASE SAVEPOINT merge_tag_into")
     except BaseException:
-        conn.execute("ROLLBACK TO SAVEPOINT tag_rename")
+        conn.execute("ROLLBACK TO SAVEPOINT merge_tag_into")
         raise
+    return n_blob
 
 
 def ensure_training_tables(conn: sqlite3.Connection) -> None:

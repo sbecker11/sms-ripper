@@ -25,8 +25,16 @@ def test_list_catalog_rows_seeded(tmp_path: Path) -> None:
     try:
         rows = tag_catalog.list_catalog_rows(conn)
         keys = {r["tag_key"] for r in rows}
-        assert "education" in keys
-        assert "unknown" in keys
+        assert keys == {
+            "education",
+            "personal",
+            "transactional",
+            "promo",
+            "social",
+            "spam",
+            "stop",
+            "unknown",
+        }
         assert any(r["tag"] == "education" and r["active"] for r in rows)
     finally:
         conn.close()
@@ -63,11 +71,12 @@ def test_upsert_add_tag(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_rename_classifier_tag_updates_training_row(tmp_path: Path) -> None:
+def test_merge_spam_into_junk_mail_updates_training_and_catalog(tmp_path: Path) -> None:
     db = tmp_path / "c.db"
     conn = sqlite3.connect(db)
     try:
         att.ensure_training_tables(conn)
+        tag_catalog.upsert_tag_row(conn, "junk_mail", active=True, archive_enabled=False)
         conn.execute(
             f"""
             INSERT INTO {att.TABLE_TRAINING}
@@ -76,7 +85,7 @@ def test_rename_classifier_tag_updates_training_row(tmp_path: Path) -> None:
             """
         )
         conn.commit()
-        att.rename_classifier_tag(conn, "spam", "junk_mail")
+        att.merge_classifier_tag_into(conn, "spam", "junk_mail")
         conn.commit()
         row = conn.execute(
             f"SELECT tag FROM {att.TABLE_TRAINING} WHERE archive_rowid = 1"
@@ -87,5 +96,8 @@ def test_rename_classifier_tag_updates_training_row(tmp_path: Path) -> None:
             f"SELECT tag FROM {tag_catalog.TABLE_TAG_CATALOG} WHERE tag = 'junk_mail'"
         ).fetchone()
         assert cat is not None
+        assert not conn.execute(
+            f"SELECT 1 FROM {tag_catalog.TABLE_TAG_CATALOG} WHERE tag = 'spam'"
+        ).fetchone()
     finally:
         conn.close()

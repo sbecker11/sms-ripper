@@ -4,7 +4,11 @@ For pipeline context (catalog, policies, archive table, training), see [FRAMEWOR
 
 ## Tag vocabulary (not fixed constants)
 
-Classifier **attribute names** come from the **active rows** in `sms_ripper_tag_catalog` (`tag_catalog.py`), not from a hardcoded enum in the LLM layer. Names like `education`, `spam`, or hypothetical `religion` / `political` are **examples**—whatever keys you seed or add in the catalog (lowercase) are what the model is asked to use and what `rules.py` matches. This repo ships a **default seed**; align rules, archive routing, and optional keyword merges if you rename or extend tags.
+Classifier **attribute names** come from the **active rows** in `sms_ripper_tag_catalog` (`tag_catalog.py`), not from a hardcoded enum in the LLM layer. Names like `education`, `spam`, or hypothetical `religion` / `political` are **examples**—whatever keys you seed or add in the catalog (lowercase) are what the model is asked to use and what `rules.py` matches. This repo ships a **default seed**; align rules, archive routing, and optional keyword heuristics when you **add**, **merge**, or extend tags (see [FRAMEWORK.md](FRAMEWORK.md) for catalog merge).
+
+## Changing catalog keys (merge, not rename)
+
+To **replace** an old key **A** with a new key **B**, add **B** in the training server **Tag catalog** page, then use **Merge into** so **A** folds into **B** (rewrites stored JSON and training metadata; **A** is removed from the catalog). There is **no** in-place rename API. **`classifier.merge_tag_in_classifier_blob`** rewrites both list- and dict-shaped **`classifier_attributes`** values.
 
 ## What kind of problem this is
 

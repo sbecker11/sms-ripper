@@ -72,7 +72,7 @@ def test_reclassify_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyP
     conn.execute("CREATE TABLE message_tags_archive (rowid INTEGER PRIMARY KEY, text TEXT)")
     archive._ensure_classifier_attributes_column(conn, "message_tags_archive")
     conn.execute(
-        'INSERT INTO message_tags_archive (rowid, text, classifier_attributes) VALUES (1, "y", \'["legit"]\')'
+        'INSERT INTO message_tags_archive (rowid, text, classifier_attributes) VALUES (1, "y", \'["personal"]\')'
     )
     conn.commit()
 
@@ -90,7 +90,7 @@ def test_reclassify_dry_run_no_write(tmp_path: Path, monkeypatch: pytest.MonkeyP
     raw = conn.execute(
         "SELECT classifier_attributes FROM message_tags_archive WHERE rowid = 1"
     ).fetchone()[0]
-    assert json.loads(raw) == ["legit"]
+    assert json.loads(raw) == ["personal"]
     conn.close()
 
 
@@ -141,7 +141,7 @@ def test_reclassify_custom_table_name(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(
         mod.classifier,
         "classify_message",
-        lambda t: classifier.ClassificationResult(["scam"], "ok", {"scam": 1.0}),
+        lambda t: classifier.ClassificationResult(["spam"], "ok", {"spam": 1.0}),
     )
     u, same, err = mod.reclassify_archive_tags(
         conn,
@@ -158,5 +158,5 @@ def test_reclassify_custom_table_name(tmp_path: Path, monkeypatch: pytest.Monkey
     raw = conn.execute(
         "SELECT classifier_attributes FROM SPAM_archive WHERE rowid = 1"
     ).fetchone()[0]
-    assert "scam" in json.loads(raw).get("attributes", [])
+    assert "spam" in json.loads(raw).get("attributes", [])
     conn.close()

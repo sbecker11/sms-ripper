@@ -71,7 +71,11 @@ def _minimal_archive_db(path: Path) -> sqlite3.Connection:
 
 def _human_payload() -> list[dict[str, object]]:
     return [
-        {"tag": t, "human_checked": t == "legit", "human_keywords": "note" if t == "legit" else ""}
+        {
+            "tag": t,
+            "human_checked": t == "personal",
+            "human_keywords": "note" if t == "personal" else "",
+        }
         for t in att.TRAINING_TAGS
     ]
 
@@ -181,11 +185,11 @@ def test_apply_regenerate_updates_archive_and_training(tmp_path: Path):
     def fake_classify(text: str, *, human_guidance: str | None = None):
         assert text == "hello voter id test"
         assert human_guidance is not None
-        assert "legit" in human_guidance
+        assert "personal" in human_guidance
         return att.classifier.ClassificationResult(
-            ["legit", "personal"],
+            ["transactional", "personal"],
             "mock",
-            {"legit": 1.0, "personal": 1.0},
+            {"transactional": 1.0, "personal": 1.0},
         )
 
     with patch.object(att.classifier, "classify_message", side_effect=fake_classify):
@@ -196,24 +200,25 @@ def test_apply_regenerate_updates_archive_and_training(tmp_path: Path):
             message_subject=None,
             human_tag_rows=_human_payload(),
         )
-    assert attrs == ["legit", "personal"]
+    assert attrs == ["personal", "transactional"]
     assert reason == "mock"
     raw = conn.execute(
         "SELECT classifier_attributes FROM message_tags_archive WHERE rowid = 1"
     ).fetchone()[0]
     assert json.loads(raw) == json.loads(
         att.classifier.encode_classifier_blob(
-            ["legit", "personal"], {"legit": 1.0, "personal": 1.0}
+            ["personal", "transactional"],
+            {"personal": 1.0, "transactional": 1.0},
         )
     )
     row = conn.execute(
         f"SELECT llm_checked, human_checked FROM {att.TABLE_TRAINING} "
-        "WHERE archive_rowid = 1 AND tag = 'legit'"
+        "WHERE archive_rowid = 1 AND tag = 'personal'"
     ).fetchone()
     assert row == (1, 1)
     kw = conn.execute(
         f"SELECT llm_keywords FROM {att.TABLE_TRAINING} "
-        "WHERE archive_rowid = 1 AND tag = 'legit'"
+        "WHERE archive_rowid = 1 AND tag = 'personal'"
     ).fetchone()[0]
     assert kw == "note"
     ts = conn.execute(
@@ -278,9 +283,9 @@ def test_apply_regenerate_checked_keyword_becomes_include_guard(tmp_path: Path):
 
     def fake_classify(text: str, *, human_guidance: str | None = None):
         return att.classifier.ClassificationResult(
-            ["legit"],
+            ["personal"],
             "mock",
-            {"legit": 1.0},
+            {"personal": 1.0},
         )
 
     rows = []

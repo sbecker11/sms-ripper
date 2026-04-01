@@ -34,8 +34,9 @@ chat.db (live messages)
 ## 3. Tag catalog (vocabulary)
 
 - **Table:** `sms_ripper_tag_catalog` (`tag_catalog.py`).
-- **Meaning:** Tags are **rows you define** (lowercase keys), not a hardcoded enum in the classifier. The default seed is only a starting point; if you add or rename tags, keep **rules**, **archive routing**, and **keyword heuristics** aligned.
+- **Meaning:** Tags are **rows you define** (lowercase keys), not a hardcoded enum in the classifier. The default seed is only a starting point; if you add, merge, or extend tags, keep **rules**, **archive routing**, and **keyword heuristics** aligned.
 - **Active tags** drive the LLM prompt (“available attributes”). **`archive_enabled`** (per row) participates in choosing archival destinations where applicable.
+- **Tag catalog — merge only:** **Merge into** folds tag **A** into an **existing** tag **B** (`merge_classifier_tag_into` / training-server API `op: "merge"`): rewrites JSON on every archive table that has `classifier_attributes`, merges training and guards, then **deletes** **A** from the catalog. To switch to a **new** key, **add** **B** first, then merge **A** → **B**.
 
 **Convention:** Stored and modeled tag strings are **lowercase** (e.g. `education`, `unknown`). In prose, **UNKNOWN** may be spelled in capitals when emphasizing the semantic role (“insufficient signal”), but JSON and SQL still use `unknown`.
 
@@ -69,6 +70,7 @@ chat.db (live messages)
 ## 7. Human-in-the-loop training
 
 - **HTTP UI:** `scripts/archive_training_server.py` (e.g. `poe archive-training-server`) — loopback-only server over **`message_tags_archive`**.
+- **Tag catalog page:** **`GET /tag-catalog`** — add or archive catalog rows; **Merge into** only for changing keys (add the target tag first, then merge source → target). API: **`POST /api/tag-catalog`** with **`op: "merge"`** and **`from`** / **`into`** (see §3).
 - **Extra tables:** `sms_ripper_archive_tag_training`, `sms_ripper_archive_training_meta`, guard/snapshot/trust tables — created by `archive_tag_training.py` on demand.
 - **Apply** re-runs the classifier with human hints and updates **`classifier_attributes`** plus training rows.
 

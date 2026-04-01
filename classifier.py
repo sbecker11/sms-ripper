@@ -4,19 +4,18 @@ Sends message text to Claude API and returns active attributes, reason, and per-
 
 **Vocabulary:** Allowed attribute names are whatever **active** tags exist in
 :data:`tag_catalog` (SQLite ``sms_ripper_tag_catalog``), not a fixed enum in this module.
-The list below is only an **illustration** of what the repo seeds by default—users may add
-tags (e.g. ``religion``, ``political``) or use different keys; keep the catalog, rules, and
-any merge heuristics aligned if you rename defaults.
+The list below matches the **default** ``tag_catalog.DEFAULT_TAG_ROWS`` (eight common SMS
+buckets). Add more keys in the DB catalog if you need finer topics; keep ``rules.py`` in sync.
 
 Illustrative keys (default seed; all lowercase strings):
-  spam       — unsolicited commercial or phishing message
-  stop       — opt-out / unsubscribe request or trigger
-  scam       — fraud / impersonation attempt
-  education  — example: civic / campaign-style bulk messaging (PACs, parties, fundraising)
-  promo      — promotional but not necessarily spam
-  legit      — legitimate message, no action needed
-  personal   — from a known person
-  unknown    — cannot determine
+  education      — civic / campaign-style bulk SMS (PACs, parties); archive target for default rule
+  personal       — conversation with a person you know
+  transactional  — OTP/2FA, banks, shipping, appointments, order/receipt updates
+  promo          — marketing and deals (rules use this key)
+  social         — social-network / platform notifications and invites
+  spam           — unsolicited junk, phishing, impersonation, or cold outreach (one bucket)
+  stop           — opt-out or STOP-style intent
+  unknown        — not enough signal (may be exclusive vs other tags when decoded)
 """
 
 import json
@@ -64,9 +63,9 @@ def _build_system_prompt(active_tags: list[str]) -> str:
 Given an SMS or iMessage, return a JSON object with this exact shape:
 
 {{
-  "attributes": ["spam", "legit"],
+  "attributes": ["spam", "personal"],
   "reason": "brief explanation",
-  "weights": {{"spam": 0.0, "legit": 0.0}}
+  "weights": {{"spam": 0.0, "personal": 0.0}}
 }}
 
 Available attributes (assign all that apply):
@@ -330,6 +329,55 @@ def encode_classifier_blob(attributes: list[str], weights: dict[str, float]) -> 
     for a in attrs_u:
         w.setdefault(a, 1.0)
     return json.dumps({"attributes": attrs_u, "weights": w}, ensure_ascii=False)
+
+
+def merge_tag_in_classifier_blob(raw: object, old_tag: str, new_tag: str) -> tuple[str | None, bool]:
+    """
+    Replace normalized ``old_tag`` with ``new_tag`` in a stored ``classifier_attributes`` value.
+    Merges duplicate attributes and combines weights with ``max`` when both keys appear.
+    Returns ``(new_json, True)`` when the blob should be rewritten, or ``(None, False)`` when
+    unchanged or empty.
+    """
+    old_c = _norm_attr(old_tag)
+    new_c = _norm_attr(new_tag)
+    if not old_c or not new_c or old_c == new_c:
+        return None, False
+    attrs, weights = decode_classifier_blob(raw)
+    w = {k: float(v) for k, v in weights.items()}
+    had_old_attr = old_c in attrs
+    w_old = w.pop(old_c, None)
+    if not had_old_attr and w_old is None:
+        return None, False
+    w_new_existing = w.get(new_c)
+    if w_old is not None:
+        w[new_c] = max(w_new_existing or 0.0, w_old)
+    elif w_new_existing is not None:
+        w[new_c] = w_new_existing
+    out_attrs: list[str] = []
+    seen: set[str] = set()
+    for a in attrs:
+        b = new_c if a == old_c else a
+        if b and b not in seen:
+            out_attrs.append(b)
+            seen.add(b)
+    if new_c not in seen and (had_old_attr or w_old is not None):
+        out_attrs.append(new_c)
+        seen.add(new_c)
+    for a in out_attrs:
+        w.setdefault(a, 1.0)
+    new_blob = encode_classifier_blob(out_attrs, w)
+    prev = (
+        None
+        if raw is None
+        else (
+            raw.decode("utf-8", errors="replace").strip()
+            if isinstance(raw, bytes)
+            else str(raw).strip()
+        )
+    )
+    if prev == new_blob.strip():
+        return None, False
+    return new_blob, True
 
 
 def _has_no_usable_plaintext(text: str) -> bool:

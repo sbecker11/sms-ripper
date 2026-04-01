@@ -9,7 +9,7 @@ as examples.
 
 Policies (see evaluate_detailed policy=):
   political — purge unsubscribe confirmations (subject or body text); archive default tag ``education`` when non-personal; no STOP/block.
-  spam      — send_stop / block / delete for SPAM or STOP; SCAM rule; no political rule (run second).
+  spam      — send_stop / block / delete for SPAM or STOP; legacy ``scam``-only rows still match a narrow rule; no political rule (run second).
 
 Actions:
   send_stop    — reply with STOP text
@@ -100,12 +100,6 @@ RULES_POLITICAL: list[Rule] = [
         actions=["log_only"],
     ),
     Rule(
-        name="legit",
-        description="Legitimate message — no action",
-        condition=lambda m: "legit" in _tags(m),
-        actions=[],
-    ),
-    Rule(
         name="personal",
         description="Personal message — no action",
         condition=lambda m: "personal" in _tags(m),
@@ -123,9 +117,11 @@ RULES_SPAM: list[Rule] = [
         actions=["send_stop", "block", "delete"],
     ),
     Rule(
-        name="scam",
-        description="Message is a SCAM — block and delete without replying",
-        condition=lambda m: "scam" in _tags(m),
+        name="legacy_scam_only",
+        description="Legacy SCAM tag (removed from default catalog) — block and delete without STOP",
+        condition=lambda m: "scam" in _tags(m)
+        and "spam" not in _tags(m)
+        and "stop" not in _tags(m),
         actions=["block", "delete"],
     ),
     Rule(
@@ -133,12 +129,6 @@ RULES_SPAM: list[Rule] = [
         description="Promotional but not spam — log only",
         condition=lambda m: "promo" in _tags(m) and "spam" not in _tags(m),
         actions=["log_only"],
-    ),
-    Rule(
-        name="legit",
-        description="Legitimate message — no action",
-        condition=lambda m: "legit" in _tags(m),
-        actions=[],
     ),
     Rule(
         name="personal",
