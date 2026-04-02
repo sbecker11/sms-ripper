@@ -2,8 +2,8 @@
 """
 Copy qualifying messages into <TAG>_archive tables in chat.db, then remove the live row.
 
-Only tags listed in ARCHIVAL_TAGS participate. The archive destination is chosen by the
-first matching tag in message.attributes (classifier order).
+Only tags with ``archive_enabled`` in the catalog participate (see :func:`tag_catalog.archival_tags`).
+Destination uses :data:`ARCHIVAL_TAG_PRIORITY` when several apply, else classifier attribute order.
 
 Each archive table may include sms-ripper-only columns (see ``_ensure_archive_extra_columns``),
 including ``classifier_attributes`` (JSON array of all classifier tags for that message).
@@ -51,17 +51,31 @@ CANONICAL_ARCHIVE_TABLE: Final[str] = "message_tags_archive"
 
 ARCHIVAL_TAGS: Final[frozenset[str]] = frozenset({DEFAULT_ARCHIVE_KEY})
 
+# When several archival tags apply, prefer these first (then fall back to classifier list order).
+# Keeps ward/church and SoFi branded SMS out of the civic ``education`` table when both tag.
+ARCHIVAL_TAG_PRIORITY: Final[tuple[str, ...]] = ("church", "sofi", "education")
+
 
 def first_archival_tag(
     attributes: list[str], archival_tags: set[str] | None = None
 ) -> str | None:
-    """First attribute (in list order) that is configured for archiving."""
+    """First archival tag: :data:`ARCHIVAL_TAG_PRIORITY` wins, then attribute list order."""
     raw = archival_tags if archival_tags is not None else set(ARCHIVAL_TAGS)
     active = {tag_catalog.normalize_tag(str(t)) for t in raw}
-    for attr in attributes:
-        au = tag_catalog.normalize_tag(str(attr))
-        if au in active:
-            return au
+    attr_list = [
+        tag_catalog.normalize_tag(str(a))
+        for a in attributes
+        if a is not None and str(a).strip()
+    ]
+    attr_list = [a for a in attr_list if a]
+    attr_set = set(attr_list)
+    for preferred in ARCHIVAL_TAG_PRIORITY:
+        p = tag_catalog.normalize_tag(preferred)
+        if p in active and p in attr_set:
+            return p
+    for attr in attr_list:
+        if attr in active:
+            return attr
     return None
 
 

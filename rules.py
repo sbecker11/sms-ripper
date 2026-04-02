@@ -8,8 +8,8 @@ keys you define in ``tag_catalog``; the conditions below use this repo’s **def
 as examples.
 
 Policies (see evaluate_detailed policy=):
-  political — purge unsubscribe confirmations (subject or body text); archive default tag ``education`` when non-personal; no STOP/block.
-  spam      — send_stop / block / delete for SPAM or STOP; legacy ``scam``-only rows still match a narrow rule; no political rule (run second).
+  political — user outbound STOP-only (``STOP_REPLY_TEXT``) → delete thread; purge unsubscribe confirmations; archive ``church`` / ``sofi`` / ``education`` when non-personal; no STOP/block.
+  spam      — user outbound STOP-only → delete thread; inbound SPAM/STOP → send_stop / block / delete; legacy ``scam``-only rows; no political rule (run second).
 
 Actions:
   send_stop    — reply with STOP text
@@ -24,13 +24,18 @@ from dataclasses import dataclass
 from typing import Callable, Literal
 
 import tag_catalog
-from reader import Message
+from reader import Message, plain_text_is_user_stop_command
 
 Policy = Literal["political", "spam"]
 
 
 def _tags(m: Message) -> set[str]:
     return {tag_catalog.normalize_tag(a) for a in (m.attributes or []) if str(a).strip()}
+
+
+def _outbound_user_stop_delete(m: Message) -> bool:
+    """True when this row is from the user and body/subject is only the configured STOP text."""
+    return m.is_from_me and plain_text_is_user_stop_command(m.combined_plaintext())
 
 
 def text_looks_like_unsubscribe_confirmation(m: Message) -> bool:
@@ -80,14 +85,36 @@ class Rule:
 
 RULES_POLITICAL: list[Rule] = [
     Rule(
+        name="outbound_user_stop_delete",
+        description="User sent STOP (or STOP_REPLY_TEXT) alone — delete thread in Messages",
+        condition=_outbound_user_stop_delete,
+        actions=["delete"],
+    ),
+    Rule(
         name="unsubscribe_confirmation",
         description="Unsubscribe confirmation text — remove from thread, do not archive",
         condition=lambda m: text_looks_like_unsubscribe_confirmation(m),
         actions=["purge"],
     ),
     Rule(
+        name="church_announcement",
+        description="Church / ward bulk (programs, sacrament notes) — copy to church_archive",
+        condition=lambda m: "church" in _tags(m)
+        and "personal" not in _tags(m)
+        and not text_looks_like_unsubscribe_confirmation(m),
+        actions=["archive"],
+    ),
+    Rule(
+        name="sofi_brand",
+        description="SoFi SMS (verify spend, alerts) — copy to sofi_archive",
+        condition=lambda m: "sofi" in _tags(m)
+        and "personal" not in _tags(m)
+        and not text_looks_like_unsubscribe_confirmation(m),
+        actions=["archive"],
+    ),
+    Rule(
         name="political",
-        description="Political messaging — copy to message_tags_archive and remove from live message table",
+        description="Civic / PAC bulk — copy to message_tags_archive and remove from live message table",
         condition=lambda m: "education" in _tags(m)
         and "personal" not in _tags(m)
         and not text_looks_like_unsubscribe_confirmation(m),
@@ -111,9 +138,15 @@ RULES_POLITICAL: list[Rule] = [
 
 RULES_SPAM: list[Rule] = [
     Rule(
+        name="outbound_user_stop_delete",
+        description="User sent STOP alone — delete thread (do not send_stop to self)",
+        condition=_outbound_user_stop_delete,
+        actions=["delete"],
+    ),
+    Rule(
         name="spam_stop",
-        description="Message is SPAM and/or STOP — reply STOP, block, delete",
-        condition=lambda m: bool({"spam", "stop"} & _tags(m)),
+        description="Inbound message is SPAM and/or STOP — reply STOP, block, delete",
+        condition=lambda m: bool({"spam", "stop"} & _tags(m)) and not _outbound_user_stop_delete(m),
         actions=["send_stop", "block", "delete"],
     ),
     Rule(

@@ -86,11 +86,13 @@ If you care about **pulling campaign / PAC SMS out of the live thread**, treat *
 
 1. **Preview** (no writes): `poe dry-run` or `poe dry-run-wide` (wider window / more rows).
 2. **Live run** (writes `chat.db`; **Messages must be quit**): `poe political-all` — backs up DB, quits Messages, then runs the agent with a wide lookback.
-3. **Where it goes**: qualifying rows are copied into the **`message_tags_archive`** table (same columns as `message`), then removed from **`message`** (see `archive.py`).
+3. **Where it goes**: qualifying rows are copied into **`<tag>_archive`** (e.g. **`church_archive`** or canonical **`message_tags_archive`** for **`education`**), then removed from **`message`** (see `archive.py`).
 
 **What gets archived**
 
-- Classifier must produce **`education`** and not **`personal`** (`rules.py` → `political` rule).
+- Classifier must produce **`church`**, **`sofi`**, or **`education`** (and not **`personal`**) (`rules.py` → `political` rules). **`sofi`** is also merged when the body contains the word **SoFi** (keyword heuristic).
+
+**Outbound STOP:** If **you** sent a message that is only **STOP** (same text as **`STOP_REPLY_TEXT`** in `.env`, default `STOP`), the agent treats it as **delete this thread** (both `political` and `spam` policies). Those rows are picked up without calling the LLM.
 - Matched action is **`archive`** only (no STOP, no blocklist).
 
 **Inspect without acting**: `poe preview-recent` / `poe preview-recent-compact` (see [docs/QUERIES.md](docs/QUERIES.md)).
@@ -138,7 +140,7 @@ chat.db → reader.py → classifier.py (Claude API) → rules.py → actions.py
 ```
 
 1. **reader.py** — reads `~/Library/Messages/chat.db` in read-only mode
-2. **classifier.py** — sends each message to Claude Sonnet, gets back **multi-label** tags plus optional **per-tag weights** in **[0, 1]**; rules see the tag list after an optional **confidence threshold** (see [docs/CLASSIFICATION.md](docs/CLASSIFICATION.md)). **Allowed tags** are whatever is **active** in `sms_ripper_tag_catalog` (not a fixed global list). The default seed is **eight** common SMS categories (`education`, `personal`, `transactional`, `promo`, `social`, `spam`, `stop`, `unknown`); **spam** covers junk and phishing together. Extend in the catalog UI as needed — see `tag_catalog.DEFAULT_TAG_ROWS` and [docs/FRAMEWORK.md](docs/FRAMEWORK.md).
+2. **classifier.py** — sends each message to Claude Sonnet, gets back **multi-label** tags plus optional **per-tag weights** in **[0, 1]**; rules see the tag list after an optional **confidence threshold** (see [docs/CLASSIFICATION.md](docs/CLASSIFICATION.md)). **Allowed tags** are whatever is **active** in `sms_ripper_tag_catalog` (not a fixed global list). The default seed is **ten** common SMS categories (`education`, `church`, `sofi`, `personal`, `transactional`, `promo`, `social`, `spam`, `stop`, `unknown`); **spam** covers junk and phishing together. Extend in the catalog UI as needed — see `tag_catalog.DEFAULT_TAG_ROWS` and [docs/FRAMEWORK.md](docs/FRAMEWORK.md).
 3. **rules.py** — maps attribute combinations to actions (merge order when multiple rules match)
 4. **actions.py** — executes: `send_stop`, `block`, `delete`, `archive`, `log_only`. **Execution order** is normalized so **`archive` always runs before `delete`** even if rule merge order differs.
 

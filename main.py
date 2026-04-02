@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # main.py
 """
-SMS Agent — reads recent iMessages, classifies them, and takes action.
+SMS Agent — reads recent iMessages (inbound + your STOP-only replies), classifies when needed, and takes action.
 
 Usage:
     python main.py               # run once (default policy: political)
@@ -19,12 +19,14 @@ import logging
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
 import config
 import reader
 import classifier
 import rules
 import actions
+from classifier import ClassificationResult
 from reader import Message
 
 # --- Logging setup ---
@@ -58,9 +60,12 @@ def process_once(
     _prev_quiet = getattr(config, "QUIET", False)
     config.QUIET = quiet
     try:
-        # 1. Fetch recent inbound messages
+        # 1. Fetch recent inbound messages plus outbound STOP-only replies (same lookback/limit each).
         try:
-            messages = reader.get_recent_messages(limit=limit, lookback_minutes=lookback)
+            inbound = reader.get_recent_messages(limit=limit, lookback_minutes=lookback)
+            outbound_stop = reader.get_recent_outbound_stop_replies(
+                limit=limit, lookback_minutes=lookback
+            )
         except FileNotFoundError as e:
             logger.error(str(e))
             return
@@ -68,11 +73,27 @@ def process_once(
             logger.error(f"Failed to read chat.db: {e}")
             return
 
+        by_rowid: dict[int, Message] = {m.rowid: m for m in inbound}
+        for m in outbound_stop:
+            by_rowid[m.rowid] = m
+        messages = sorted(
+            by_rowid.values(),
+            key=lambda m: (m.date or datetime(1970, 1, 1)),
+            reverse=True,
+        )
+
         if not messages:
             logger.info("No new messages found.")
             return
 
-        logger.info(f"Found {len(messages)} message(s) to process.")
+        n_out_stop = sum(
+            1
+            for m in messages
+            if m.is_from_me
+            and reader.plain_text_is_user_stop_command(m.combined_plaintext())
+        )
+        extra = f" ({n_out_stop} outbound STOP-only)" if n_out_stop else ""
+        logger.info(f"Found {len(messages)} message(s) to process.{extra}")
 
         stats = {"total": len(messages), "actioned": 0, "skipped": 0, "errors": 0}
         pending: list[tuple[Message, list[str], int]] = []
@@ -84,12 +105,22 @@ def process_once(
             except Exception as e:
                 return (idx, e)
 
-        classify_by_index: dict[int, tuple[list[str], str] | Exception] = {}
-        need_indices = list(range(len(messages)))
-        workers = max(
-            1,
-            min(config.CLASSIFY_MAX_WORKERS, len(need_indices)),
-        )
+        classify_by_index: dict[int, ClassificationResult | Exception] = {}
+        need_indices: list[int] = []
+        for idx in range(len(messages)):
+            om = messages[idx]
+            if om.is_from_me and reader.plain_text_is_user_stop_command(
+                om.combined_plaintext()
+            ):
+                classify_by_index[idx] = ClassificationResult(
+                    [],
+                    "outbound STOP-only — classify skipped",
+                    {},
+                )
+            else:
+                need_indices.append(idx)
+
+        workers = max(1, min(config.CLASSIFY_MAX_WORKERS, len(need_indices)))
         if len(need_indices) > 1:
             logger.info(
                 f"Classifying {len(need_indices)} message(s) with up to {workers} parallel workers."
@@ -125,6 +156,7 @@ def process_once(
                 continue
 
             res = raw_class
+            assert isinstance(res, ClassificationResult)
             msg.attributes = res.attributes
             msg.attribute_weights = res.weights
             if not quiet:

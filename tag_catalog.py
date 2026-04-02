@@ -2,9 +2,8 @@ from __future__ import annotations
 
 """
 Per-database tag vocabulary. Tags are **user-defined** rows (lowercase keys), not a fixed
-global enum. ``DEFAULT_TAG_ROWS`` seeds **eight** common SMS buckets (personal, transactional,
-promotional, civic blast, abuse/opt-out, trust signals, social alerts, unknown); add rows in
-the catalog UI or here as needed—keep ``rules.py`` / ``classifier.py`` heuristics consistent.
+global enum. ``DEFAULT_TAG_ROWS`` seeds common SMS buckets; add rows in the catalog UI or
+here as needed—keep ``rules.py`` / ``classifier.py`` heuristics consistent.
 """
 
 import re
@@ -15,11 +14,13 @@ TABLE_TAG_CATALOG = "sms_ripper_tag_catalog"
 # Lowercase keys in DB; flexible but safe for SQL identifiers as unquoted literals.
 TAG_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_]{0,62}$")
 
-# Default seed: eight high-volume SMS categories. ``education`` stays archive-enabled for this
-# repo’s political rule; everything else is active for classification only unless you enable
-# archive in the catalog UI.
+# Default seed: high-volume SMS categories. ``education``, ``church``, and ``sofi`` are
+# archive-enabled for ``rules.py`` political rules; everything else is active for classification
+# only unless you enable archive in the catalog UI.
 DEFAULT_TAG_ROWS: tuple[tuple[str, int, int], ...] = (
     ("education", 1, 1),  # civic / PAC-style bulk; ``rules.py`` political archive
+    ("church", 1, 1),  # ward/stake programs, sacrament announcements, religious bulk
+    ("sofi", 1, 1),  # SoFi app/bank fraud alerts, spend verifications, account SMS
     ("personal", 1, 0),  # 1:1 from someone you know
     ("transactional", 1, 0),  # OTP/2FA, banks, shipping, appointments, receipts
     ("promo", 1, 0),  # marketing / deals (``rules.py`` promo_only)

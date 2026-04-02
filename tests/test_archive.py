@@ -20,6 +20,26 @@ def test_first_archival_tag_order(monkeypatch: pytest.MonkeyPatch):
     assert archive.first_archival_tag(["OTHER"]) is None
 
 
+def test_first_archival_tag_church_before_education():
+    archival = frozenset({"church", "education"})
+    assert (
+        archive.first_archival_tag(["education", "church"], archival_tags=set(archival))
+        == "church"
+    )
+    assert (
+        archive.first_archival_tag(["church", "education"], archival_tags=set(archival))
+        == "church"
+    )
+
+
+def test_first_archival_tag_sofi_before_education():
+    archival = frozenset({"sofi", "education"})
+    assert (
+        archive.first_archival_tag(["education", "sofi"], archival_tags=set(archival))
+        == "sofi"
+    )
+
+
 def test_archive_table_name():
     assert archive.archive_table_name(archive.DEFAULT_ARCHIVE_KEY) == "message_tags_archive"
 

@@ -4,11 +4,13 @@ Sends message text to Claude API and returns active attributes, reason, and per-
 
 **Vocabulary:** Allowed attribute names are whatever **active** tags exist in
 :data:`tag_catalog` (SQLite ``sms_ripper_tag_catalog``), not a fixed enum in this module.
-The list below matches the **default** ``tag_catalog.DEFAULT_TAG_ROWS`` (eight common SMS
-buckets). Add more keys in the DB catalog if you need finer topics; keep ``rules.py`` in sync.
+The list below matches the **default** ``tag_catalog.DEFAULT_TAG_ROWS``. Add more keys in the
+DB catalog if you need finer topics; keep ``rules.py`` in sync.
 
 Illustrative keys (default seed; all lowercase strings):
   education      — civic / campaign-style bulk SMS (PACs, parties); archive target for default rule
+  church         — ward/stake or congregation bulk (programs, hymn schedules, meeting announcements)
+  sofi           — SMS explicitly from SoFi (fraud/verify spend, account alerts); use ``transactional`` for generic banks
   personal       — conversation with a person you know
   transactional  — OTP/2FA, banks, shipping, appointments, order/receipt updates
   promo          — marketing and deals (rules use this key)
@@ -102,6 +104,7 @@ def keyword_heuristic_weight_bounds(tag: str) -> tuple[float, float]:
 CIVIC_EDUCATION_KEYWORD_MARKERS: tuple[str, ...] = (
     "us-red",
     "white house",
+    "oval office",
     "vote-red",
     "win-red",
     "redtxt",
@@ -117,11 +120,14 @@ CIVIC_EDUCATION_KEYWORD_MARKERS: tuple[str, ...] = (
     "voter id",
     "voter verification",
     "gop races",
+    "txt gop",
+    "text gop",
     "republican races",
     "contact congress",
     "congress needs",
     "expel ",
     "from congress",
+    "congress",
     "speaker gingrich",
     "vice president vance",
     "jd vance",
@@ -129,6 +135,7 @@ CIVIC_EDUCATION_KEYWORD_MARKERS: tuple[str, ...] = (
     "president trump",
     "pres. trump",
     "senator kennedy",
+    "sen. kennedy",
     "john kennedy",
     "juan ciscomani",
     "tulsi gabbard",
@@ -147,12 +154,22 @@ CIVIC_EDUCATION_KEYWORD_MARKERS: tuple[str, ...] = (
     "rep-26.com",
     "26gop.com",
     "gop26.info",
+    "fundgop.net",
     "rep2026.co",
     "usa-26.io",
+    "us4u.io",
     "am1st.info",
     "speaker johnson",
     "marsha blackburn",
     "ted cruz",
+    "senator cruz",
+    "sen. cruz",
+    "josh hawley",
+    "senator hawley",
+    "sen. hawley",
+    "john thune",
+    "senator thune",
+    "sen. thune",
     "donald trump jr",
     "steve scalise",
     "karoline leavitt",
@@ -163,19 +180,41 @@ CIVIC_EDUCATION_KEYWORD_MARKERS: tuple[str, ...] = (
     "maga supporter status",
     "mandatory voter id",
     "proof of citizenship",
+    "defunded",
+    "defunding",
+    "defund",
+    "government",
+    "nyc radicals",
+    "nyc radical",
 )
 
 # Regex backstop for noisy civic SMS where punctuation/brackets vary.
 CIVIC_EDUCATION_KEYWORD_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:house|senate)\s*gop\b", re.IGNORECASE),
     re.compile(r"\bpres(?:ident|\.)?\s*trump\b", re.IGNORECASE),
+    re.compile(r"\boval\s+office\b", re.IGNORECASE),
     re.compile(r"\b(?:vp\s*)?jd\s*vance\b", re.IGNORECASE),
     re.compile(r"\bspeaker\s+johnson\b", re.IGNORECASE),
+    re.compile(r"\bted\s+cruz\b", re.IGNORECASE),
+    re.compile(r"\bsen(?:ator)?\.?\s+cruz\b", re.IGNORECASE),
+    re.compile(r"\bjosh\s+hawley\b", re.IGNORECASE),
+    re.compile(r"\bsen(?:ator)?\.?\s+hawley\b", re.IGNORECASE),
+    re.compile(r"\bjohn\s+kennedy\b", re.IGNORECASE),
+    re.compile(r"\bsen(?:ator)?\.?\s+kennedy\b", re.IGNORECASE),
+    re.compile(r"\bjohn\s+thune\b", re.IGNORECASE),
+    re.compile(r"\bsen(?:ator)?\.?\s+thune\b", re.IGNORECASE),
+    re.compile(r"\bdefund(?:ed|ing|s)?\b", re.IGNORECASE),
+    re.compile(r"\bgovernment\b", re.IGNORECASE),
+    re.compile(r"\bnyc\s+radical(s)?\b", re.IGNORECASE),
+    re.compile(r"\bcongress\b", re.IGNORECASE),
     re.compile(r"\bvoter\s*id\b", re.IGNORECASE),
     re.compile(r"\bproof\s+of\s+citizenship\b", re.IGNORECASE),
     re.compile(r"\b(?:dnc|rnc|dems?|gop|maga)\b", re.IGNORECASE),
+    # G.O.P., G O P, or punctuation-stripped “g o p” after normalize
+    re.compile(r"\bg\s*\.?\s*o\s*\.?\s*p\s*\.?\b", re.IGNORECASE),
+    re.compile(r"\bg\s+o\s+p\b", re.IGNORECASE),
     re.compile(
-        r"\b(?:housegop\.info|rnctxt\.co|redtxt\.vip|rep2026\.co|voterep\.co|26gop\.com|gop26\.info)\b",
+        r"\b(?:housegop\.info|rnctxt\.co|redtxt\.vip|fundgop\.net|rep2026\.co|voterep\.co|26gop\.com|gop26\.info|us4u\.io)\b",
         re.IGNORECASE,
     ),
 )
@@ -194,6 +233,13 @@ def _normalize_for_keyword_scan(text: str) -> str:
     return s
 
 
+def _sofi_keyword_hit(text: str) -> bool:
+    """True when body mentions SoFi (word boundary; case-insensitive)."""
+    if not (text or "").strip():
+        return False
+    return bool(re.search(r"\bsofi\b", text, flags=re.IGNORECASE))
+
+
 def _civic_education_keyword_hit(text: str) -> bool:
     raw = text.lower()
     norm = _normalize_for_keyword_scan(text)
@@ -209,6 +255,7 @@ def _civic_education_keyword_hit(text: str) -> bool:
 # (catalog tag key, ``text -> bool``). If the model already listed the tag, skip (no weight bump).
 KEYWORD_HEURISTIC_CHECKERS: tuple[tuple[str, Callable[[str], bool]], ...] = (
     ("education", _civic_education_keyword_hit),
+    ("sofi", _sofi_keyword_hit),
 )
 
 

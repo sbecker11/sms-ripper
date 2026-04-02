@@ -135,6 +135,36 @@ def test_message_display_with_and_without_date():
     assert "→ ME" in d
 
 
+def test_plain_text_is_user_stop_command():
+    assert reader.plain_text_is_user_stop_command("STOP") is True
+    assert reader.plain_text_is_user_stop_command("  stop.  ") is True
+    assert reader.plain_text_is_user_stop_command("STOP please") is False
+    assert reader.plain_text_is_user_stop_command("") is False
+
+
+def test_get_recent_outbound_stop_replies_finds_stop_only(chat_db_path, monkeypatch):
+    monkeypatch.setattr(config, "LOOKBACK_MINUTES", 120)
+    now_ns = reader.datetime_to_apple_ts(datetime.utcnow())
+    populate_chat_db(
+        chat_db_path,
+        text="STOP",
+        is_from_me=1,
+        date_ns=now_ns,
+        sender="+19998887777",
+    )
+    populate_chat_db(
+        chat_db_path,
+        text="not stop",
+        is_from_me=1,
+        date_ns=now_ns + 1,
+        sender="+19998887777",
+    )
+    out = reader.get_recent_outbound_stop_replies(limit=10, lookback_minutes=120)
+    assert len(out) == 1
+    assert out[0].text == "STOP"
+    assert out[0].is_from_me is True
+
+
 def test_get_recent_messages_missing_db_raises(tmp_path, monkeypatch):
     missing = tmp_path / "nope.db"
     monkeypatch.setattr(config, "CHAT_DB_PATH", str(missing))

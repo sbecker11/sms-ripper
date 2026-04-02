@@ -4,14 +4,19 @@ import rules
 from reader import Message
 
 
-def _msg(attrs: list[str]) -> Message:
+def _msg(
+    attrs: list[str],
+    text: str = "x",
+    *,
+    is_from_me: bool = False,
+) -> Message:
     return Message(
         rowid=1,
         chat_id=1,
         chat_identifier="+15550001111",
         sender="+15550001111",
-        text="x",
-        is_from_me=False,
+        text=text,
+        is_from_me=is_from_me,
         date=None,
         attributes=attrs,
     )
@@ -24,6 +29,18 @@ def test_political_unsubscribe_confirmation_purges_not_archives():
     m = _msg(["personal"])
     m.text = "You have unsubscribed from alerts."
     assert rules.evaluate(m) == ["purge"]
+
+
+def test_political_outbound_stop_delete_thread():
+    assert rules.evaluate(_msg([], text="STOP", is_from_me=True)) == ["delete"]
+
+
+def test_political_outbound_stop_punctuation_delete_thread():
+    assert rules.evaluate(_msg([], text="stop.", is_from_me=True)) == ["delete"]
+
+
+def test_political_outbound_not_stop_only_no_delete():
+    assert rules.evaluate(_msg([], text="STOP please", is_from_me=True)) == ["log_only"]
 
 
 def test_political_delayed_unsubscribe_phrases_purge():
@@ -64,6 +81,16 @@ def test_political_scam_alone_log_only():
 
 def test_political_spam_and_scam_log_only():
     assert rules.evaluate(_msg(["SPAM", "SCAM"])) == ["log_only"]
+
+
+def test_political_church_archives_only_when_not_personal():
+    assert rules.evaluate(_msg(["church"])) == ["archive"]
+    assert rules.evaluate(_msg(["church", "personal"])) == []
+
+
+def test_political_sofi_archives_only_when_not_personal():
+    assert rules.evaluate(_msg(["sofi"])) == ["archive"]
+    assert rules.evaluate(_msg(["sofi", "personal"])) == []
 
 
 def test_political_political_archives_only_when_not_personal():
@@ -108,6 +135,12 @@ def test_political_evaluate_detailed_no_match():
 
 
 # --- policy=spam: second pass ---
+
+
+def test_spam_outbound_stop_delete_only():
+    assert rules.evaluate(_msg([], text="STOP", is_from_me=True), policy="spam") == [
+        "delete"
+    ]
 
 
 def test_spam_policy_spam_stop_block_delete():

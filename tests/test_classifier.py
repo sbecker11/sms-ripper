@@ -174,6 +174,21 @@ def test_classify_message_empty_text_with_human_guidance_still_calls_api(monkeyp
     assert res.attributes == ["personal"]
 
 
+def test_classify_message_adds_sofi_for_brand_text(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["transactional"], "reason": "bank alert"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    body = (
+        "from SoFi. Did you try to spend $54.99 at GENERALGOODIES? Reply YES or NO within 1 hour"
+    )
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message(body)
+    assert "sofi" in res.attributes
+    assert "transactional" in res.attributes
+    lo, hi = classifier.keyword_heuristic_weight_bounds("sofi")
+    assert lo <= res.weights["sofi"] <= hi
+
+
 def test_classify_message_adds_political_for_white_house(monkeypatch):
     monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
     inner = json.dumps({"attributes": ["personal"], "reason": "ok"})
@@ -209,6 +224,168 @@ def test_classify_message_adds_political_for_vote_red_domain(monkeypatch):
 
     assert "education" in res.attributes
     assert "spam" in res.attributes
+
+
+def test_classify_message_adds_political_for_ted_cruz_whitespace(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Message from Ted  Cruz — donate now")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_oval_office(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("From the Oval  Office — urgent")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_congress(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Congress must act — donate now")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_nyc_radicals(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Stop NYC  radicals — donate")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_government(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Big Government is the problem — reply YES")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_defunded(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("They DEFUNDED border security — act now")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_john_kennedy(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("John  Kennedy: Louisiana update")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_sen_kennedy(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Sen. Kennedy needs 500 patriots")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_john_thune(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("John  Thune: GOP leadership update")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_senator_thune(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Sen. Thune here — reply YES")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_josh_hawley(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Josh  Hawley: urgent PAC update")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_senator_hawley(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Senator Hawley here — reply YES")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_senator_cruz(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "x"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Sen. Cruz needs your help")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_gop_abbreviation(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "blast"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Support the G.O.P. — reply YES")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_txt_gop(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "short code"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Txt GOP to 80810 for updates")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_us4u_domain(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "offer"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Tap https://us4u.io/abc123")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_rep2026_domain(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["promo"], "reason": "offer"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Sign: https://rep2026.co/abc")
+    assert "education" in res.attributes
+
+
+def test_classify_message_adds_political_for_fundgop_domain(monkeypatch):
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", "test-key")
+    inner = json.dumps({"attributes": ["personal"], "reason": "ok"})
+    raw = json.dumps(_anthropic_response_payload(inner)).encode()
+    with patch.object(classifier.urllib.request, "urlopen", return_value=_FakeResponse(raw)):
+        res = classifier.classify_message("Donate https://fundgop.net/xYz")
+    assert "education" in res.attributes
 
 
 def test_classify_message_adds_political_for_housegop_domain(monkeypatch):

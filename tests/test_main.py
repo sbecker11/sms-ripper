@@ -35,6 +35,7 @@ def main_mod(monkeypatch: pytest.MonkeyPatch, tmp_path):
     import main as m
 
     monkeypatch.setattr(m.actions, "activate_messages", lambda: True)
+    monkeypatch.setattr(m.reader, "get_recent_outbound_stop_replies", lambda **k: [])
     return m
 
 

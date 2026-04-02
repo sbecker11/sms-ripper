@@ -26,13 +26,15 @@ def test_list_catalog_rows_seeded(tmp_path: Path) -> None:
         rows = tag_catalog.list_catalog_rows(conn)
         keys = {r["tag_key"] for r in rows}
         assert keys == {
+            "church",
             "education",
             "personal",
-            "transactional",
             "promo",
             "social",
+            "sofi",
             "spam",
             "stop",
+            "transactional",
             "unknown",
         }
         assert any(r["tag"] == "education" and r["active"] for r in rows)

@@ -4,6 +4,30 @@ All notable changes to this project are documented here. Entries use **UTC** tim
 
 ---
 
+## 2026-04-01T18:00:00Z UTC
+
+- **Civic keyword heuristic:** Added **fundgop.net** and **us4u.io** to ``education`` merge markers and domain regex so SMS with those hosts get the political archive path (``message_tags_archive`` under default ``political`` policy). Broadened **GOP** matching: ``txt gop`` / ``text gop`` phrases, **G.O.P.** / spaced-letter forms, and ``g o p`` after punctuation normalization. **Ted Cruz:** regex ``\bted\s+cruz\b`` (handles double spaces), phrases **senator cruz** / **sen. cruz**, and ``\bsen(?:ator)?\.?\s+cruz\b``. **Josh Hawley:** same pattern — ``josh hawley``, **senator hawley** / **sen. hawley**, ``\bjosh\s+hawley\b``, ``\bsen(?:ator)?\.?\s+hawley\b``. **John Kennedy** (already had substring markers): **sen. kennedy**, ``\bjohn\s+kennedy\b``, ``\bsen(?:ator)?\.?\s+kennedy\b``. **John Thune:** ``john thune``, **senator thune** / **sen. thune**, ``\bjohn\s+thune\b``, ``\bsen(?:ator)?\.?\s+thune\b``. **Defund / defunded:** markers **defund** / **defunding** / **defunded** and regex ``\bdefund(?:ed|ing|s)?\b``. **Government:** marker and ``\bgovernment\b`` (broad — may match non-PAC SMS that mention government). **NYC radicals:** ``nyc radicals``, ``nyc radical``, ``\bnyc\s+radical(s)?\b``. **Congress:** standalone marker **congress** (plus existing *congress* phrases) and ``\bcongress\b`` (does not match inside *Congressional* as a whole word — substring marker still catches *Congressional*). **Oval Office:** ``oval office`` and ``\boval\s+office\b``.
+
+---
+
+## 2026-04-01T16:00:00Z UTC
+
+- **Outbound STOP:** Recent **from-me** messages whose body/subject is only ``STOP_REPLY_TEXT`` from ``.env`` (default **STOP**, with optional ``.`` / ``!`` when that value is **STOP**) are loaded each run, **not** sent to the classifier, and match a new first rule on both policies: **delete** the **thread** in Messages (AppleScript). Inbound **STOP** tagging under **spam** policy is unchanged. Helpers: ``reader.get_recent_outbound_stop_replies``, ``reader.plain_text_is_user_stop_command``.
+
+---
+
+## 2026-04-01T14:00:00Z UTC
+
+- **Tag `sofi`:** Default catalog adds **`sofi`** (archive-enabled) for SoFi-branded SMS (fraud / verify-spend, account alerts). **`rules.py`** (`political`) archives non-personal **`sofi`** into **`sofi_archive`**. **`classifier._sofi_keyword_hit`** + **`KEYWORD_HEURISTIC_CHECKERS`** add **`sofi`** when the body contains the word **SoFi** (so **`transactional`-only** model output still archives to **`sofi_archive`**). **`ARCHIVAL_TAG_PRIORITY`** is **`church`**, **`sofi`**, **`education`**.
+
+---
+
+## 2026-04-01T12:00:00Z UTC
+
+- **Tag `church`:** Default catalog seed adds **`church`** (archive-enabled) for ward/congregation bulk (programs, musical numbers, meeting notes). **`rules.py`** (`political`) archives non-personal **`church`** into **`church_archive`**. **`archive.first_archival_tag`** prefers **`church`** over **`education`** when both apply so mixed tagging lands in the church table.
+
+---
+
 ## 2026-04-01T02:00:00Z UTC
 
 - **Tag catalog UI / API:** Removed **rename**; only **merge** remains for changing tag keys. Use **Add** for the target name, then **Merge into**. Removed ``rename_classifier_tag`` and ``tag_catalog.rename_catalog_key``.

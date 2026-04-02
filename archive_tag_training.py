@@ -391,6 +391,8 @@ def heuristic_keywords_political(text: str) -> str:
 def _keywords_for_tag(tag: str, text: str) -> str:
     if tag == "education":
         return heuristic_keywords_political(text)
+    if tag == "sofi":
+        return "sofi" if classifier._sofi_keyword_hit(text) else ""
     return ""
 
 
@@ -833,11 +835,10 @@ def build_message_state(
         human_keywords_display = strip_human_tokens_already_in_merged_llm(
             human_keywords, llm_keywords
         )
-        # ``education`` is the only tag with body heuristics; if the model tagged it but no marker
-        # matched, explain instead of a blank LLM hint row.
+        # Tags with body heuristics: if the model tagged one but no marker matched, explain.
         if (
             not (llm_keywords or "").strip()
-            and tag == "education"
+            and tag in ("education", "sofi")
             and in_llm
             and llm_checked
         ):
