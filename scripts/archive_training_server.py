@@ -19,6 +19,7 @@ import sqlite3
 import subprocess
 import sys
 import traceback
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -662,34 +663,108 @@ def _api_tag_catalog_mutate(conn: sqlite3.Connection, body: dict[str, object]) -
     raise ValueError(f"unknown op {op!r} (use add, update, merge)")
 
 
-_TAG_CATALOG_HTML = """<!DOCTYPE html>
+_TAG_CATALOG_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>sms-ripper — Tag catalog</title>
   <style>
-    :root { font-family: system-ui, sans-serif; line-height: 1.45; }
-    body { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-    h1 { font-size: 1.25rem; }
+__THEME_CSS__
+__TOGGLE_CSS__
+    :root { font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    html { background: var(--sr-bg-page); color: var(--sr-fg); }
+    body {
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem 5.5rem;
+      line-height: 1.45;
+      font-size: 0.9rem;
+    }
+__HERO_H1_CSS__
+    h1 { font-size: 1.35rem; }
     nav { margin-bottom: 1rem; font-size: 0.9rem; }
-    nav a { color: #1565c0; }
-    table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
-    th, td { border: 1px solid #ccc; padding: 0.35rem 0.5rem; text-align: left; }
-    th { background: #f5f5f5; }
+    nav a { color: var(--sr-link); }
+    nav a:visited { color: var(--sr-link-visited); }
+    .catalog-meta { color: var(--sr-fg-muted); font-size: 0.85rem; margin: 0.5rem 0 1rem; }
+    .catalog-meta code { font-size: 0.82em; color: var(--sr-fg); }
+    .catalog-blurb { font-size: 0.85rem; color: var(--sr-fg-muted); margin-bottom: 1rem; }
+    .catalog-blurb strong { color: var(--sr-fg); }
+    table.catalog-tbl { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+    .catalog-tbl th, .catalog-tbl td {
+      border: 1px solid var(--sr-border);
+      padding: 0.4rem 0.5rem;
+      text-align: left;
+      vertical-align: middle;
+    }
+    .catalog-tbl th {
+      background: var(--sr-th-bg);
+      color: var(--sr-fg-muted);
+      font-weight: 600;
+      font-size: 0.78rem;
+    }
+    .catalog-tbl tr:nth-child(even) td { background: var(--sr-tr-alt); }
     td.mono { font-family: ui-monospace, monospace; }
-    .err { color: #c62828; margin: 0.5rem 0; }
-    .ok { color: #2e7d32; margin: 0.5rem 0; font-size: 0.85rem; }
-    footer.add-row { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd; }
+    .catalog-tbl input[type="checkbox"] { accent-color: var(--sr-link); vertical-align: middle; }
+    .catalog-tbl input[type="text"] {
+      padding: 0.25rem 0.4rem;
+      width: 100%;
+      max-width: 14rem;
+      background: var(--sr-bg-page);
+      color: var(--sr-fg);
+      border: 1px solid var(--sr-border);
+      border-radius: 4px;
+    }
+    .catalog-tbl button {
+      font: inherit;
+      padding: 0.28rem 0.65rem;
+      cursor: pointer;
+      background: var(--sr-bar-btn-bg);
+      color: var(--sr-bar-btn-fg);
+      border: 1px solid var(--sr-bar-btn-border);
+      border-radius: 4px;
+    }
+    .catalog-tbl button:hover {
+      color: var(--sr-bar-btn-hover-fg);
+      border-color: var(--sr-bar-btn-hover-border);
+    }
+    .err { color: var(--sr-err); margin: 0.5rem 0; }
+    .ok { color: var(--sr-badge-ok); margin: 0.5rem 0; font-size: 0.85rem; }
+    footer.add-row {
+      margin-top: 1.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--sr-border);
+    }
+    footer.add-row label { color: var(--sr-fg-muted); }
+    footer.add-row input[type="text"] {
+      padding: 0.28rem 0.45rem;
+      background: var(--sr-bg-page);
+      color: var(--sr-fg);
+      border: 1px solid var(--sr-border);
+      border-radius: 4px;
+      width: 12rem;
+    }
+    footer.add-row button {
+      font: inherit;
+      padding: 0.28rem 0.65rem;
+      cursor: pointer;
+      background: var(--sr-bar-btn-bg);
+      color: var(--sr-bar-btn-fg);
+      border: 1px solid var(--sr-bar-btn-border);
+      border-radius: 4px;
+    }
     label { display: inline-block; margin-right: 0.75rem; font-size: 0.85rem; }
-    input[type="text"] { padding: 0.25rem 0.4rem; width: 12rem; }
-    button { font: inherit; padding: 0.25rem 0.6rem; cursor: pointer; }
   </style>
+__THEME_BOOTSTRAP_HEAD__
 </head>
 <body>
+__TOGGLE_HTML__
   <nav><a href="/">← Archive index</a></nav>
   <h1>Tag catalog</h1>
-  <p style="font-size:0.85rem;color:#555">Active tags drive the classifier prompt and training UI.
+  <p class="catalog-meta">Page served: <span class="dt-adjustable" data-utc="__PAGE_UTC__">…</span>
+  (use <strong>Time</strong> above for UTC vs local — matches archive index &amp; training pages.)</p>
+  <p class="catalog-blurb">Active tags drive the classifier prompt and training UI.
   <strong>Archive</strong> marks tags that copy rows into <code>message_tags_archive</code> when present
   (first match in attribute order). <strong>Merge into</strong> folds the source tag into an <em>existing</em> tag: rewrites <code>classifier_attributes</code> on archive tables, merges training rows and guards, then removes the source from the catalog. To use a <em>new</em> key, add that tag first, then merge the old tag into it.</p>
   <p class="err" id="msg" hidden></p>
@@ -723,7 +798,7 @@ _TAG_CATALOG_HTML = """<!DOCTYPE html>
     return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   }
   function render(rows) {
-    var h = "<table><thead><tr><th>Tag</th><th>Active</th><th>Archive</th><th>Rename to</th><th></th><th>Merge into</th><th></th></tr></thead><tbody>";
+    var h = "<table class=\\"catalog-tbl\\"><thead><tr><th>Tag</th><th>Active</th><th>Archive</th><th>Merge into</th><th></th></tr></thead><tbody>";
     rows.forEach(function (r) {
       var tag = r.tag;
       h += "<tr><td class=\\"mono\\">" + esc(tag) + "</td>";
@@ -795,9 +870,27 @@ _TAG_CATALOG_HTML = """<!DOCTYPE html>
   load();
 })();
   </script>
+__THEME_JS__
+__TOGGLE_JS__
 </body>
 </html>
 """
+
+
+def _tag_catalog_html() -> str:
+    """Full tag-catalog page HTML with theme/tz controls (shared with index via html_tz_toggle)."""
+    ht = html_tz_toggle
+    page_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    return (
+        _TAG_CATALOG_TEMPLATE.replace("__THEME_CSS__", ht.THEME_CSS)
+        .replace("__TOGGLE_CSS__", ht.TOGGLE_CSS)
+        .replace("__HERO_H1_CSS__", ht.HERO_H1_CSS)
+        .replace("__THEME_BOOTSTRAP_HEAD__", ht.THEME_BOOTSTRAP_HEAD)
+        .replace("__TOGGLE_HTML__", ht.TOGGLE_HTML)
+        .replace("__THEME_JS__", ht.THEME_JS)
+        .replace("__TOGGLE_JS__", ht.TOGGLE_JS)
+        .replace("__PAGE_UTC__", page_utc)
+    )
 
 
 class TrainingHandler(BaseHTTPRequestHandler):
@@ -948,7 +1041,7 @@ class TrainingHandler(BaseHTTPRequestHandler):
             return
 
         if len(parts) == 1 and parts[0] == "tag-catalog":
-            raw = _TAG_CATALOG_HTML.encode("utf-8")
+            raw = _tag_catalog_html().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(raw)))
