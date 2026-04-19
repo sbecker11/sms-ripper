@@ -34,7 +34,7 @@ python3 -m venv venv && source venv/bin/activate && pip install -r requirements.
 # SMS_RIPPER_REVIEWER_ID=your-name
 ```
 
-See [docs/SETUP.md](docs/SETUP.md) for full setup. Configuration uses **Pydantic** / **pydantic-settings**; the agent still uses stdlib + `osascript` for Messages.
+See [docs/SETUP.md](docs/SETUP.md) for full setup. **Documentation index:** [docs/README.md](docs/README.md). Configuration uses **Pydantic** / **pydantic-settings**; the agent still uses stdlib + `osascript` for Messages.
 
 **Architecture (catalog, policies, archive, training):** [docs/FRAMEWORK.md](docs/FRAMEWORK.md).
 
@@ -125,7 +125,7 @@ Quick reference:
 
 **Static report:** each daemon cycle regenerates **`reports/index.html`** (political archive). **`poe report-generate`** / **`poe report-open`**.
 
-**Classification details:** [docs/CLASSIFICATION.md](docs/CLASSIFICATION.md) — multi-label tags, optional per-tag weights, archive JSON, and training column **W**. **System overview:** [docs/FRAMEWORK.md](docs/FRAMEWORK.md).
+**Classification (tags, weights, archive JSON, training column W)** and **system overview:** [docs/FRAMEWORK.md](docs/FRAMEWORK.md) — see **§5 Classification and tag weighting** and **§10 Future work**.
 
 **Archive tag training (local UI):** With Messages quit and **`ANTHROPIC_API_KEY`** set, run **`poe archive-training-server`** (or **`python scripts/archive_training_server.py`**). It binds to **loopback only** (default **http://127.0.0.1:8765**) and **opens Google Chrome** to that URL on macOS (**`--no-browser`** to skip). **`GET /`** serves the same archive index as **`reports/index.html`** (newest first, **`--limit`** rows), plus a **last retrain** column (UTC from the last training-UI **Apply**) and a **Retrained (training UI)** filter so you can avoid redoing the same row. The **full** icon opens the tag editor at **`/message/<rowid>`**. **`GET /tag-catalog`** edits **`sms_ripper_tag_catalog`** (add tags, archive flags, **Merge into** to fold one key into another—add the target key first; see [docs/FRAMEWORK.md](docs/FRAMEWORK.md)). **Apply** re-runs the classifier with your hints, updates **`message_tags_archive.classifier_attributes`** (plus small SQLite training tables), then **closes** the message tab and reloads the index tab when you opened it from there. **Done** closes **without** re-running the classifier (same index reload when opened from the index). For a **file://** report that jumps to the server, regenerate with **`--archive-training-url http://127.0.0.1:8765`** while the server is running.
 
@@ -140,7 +140,7 @@ chat.db → reader.py → classifier.py (Claude API) → rules.py → actions.py
 ```
 
 1. **reader.py** — reads `~/Library/Messages/chat.db` in read-only mode
-2. **classifier.py** — sends each message to Claude Sonnet, gets back **multi-label** tags plus optional **per-tag weights** in **[0, 1]**; rules see the tag list after an optional **confidence threshold** (see [docs/CLASSIFICATION.md](docs/CLASSIFICATION.md)). **Allowed tags** are whatever is **active** in `sms_ripper_tag_catalog` (not a fixed global list). The default seed is **ten** common SMS categories (`education`, `church`, `sofi`, `personal`, `transactional`, `promo`, `social`, `spam`, `stop`, `unknown`); **spam** covers junk and phishing together. Extend in the catalog UI as needed — see `tag_catalog.DEFAULT_TAG_ROWS` and [docs/FRAMEWORK.md](docs/FRAMEWORK.md).
+2. **classifier.py** — sends each message to Claude Sonnet, gets back **multi-label** tags plus optional **per-tag weights** in **[0, 1]**; rules see the tag list after an optional **confidence threshold** (see [docs/FRAMEWORK.md](docs/FRAMEWORK.md#5-classification-and-tag-weighting)). **Allowed tags** are whatever is **active** in `sms_ripper_tag_catalog` (not a fixed global list). The default seed is **ten** common SMS categories (`education`, `church`, `sofi`, `personal`, `transactional`, `promo`, `social`, `spam`, `stop`, `unknown`); **spam** covers junk and phishing together. Extend in the catalog UI as needed — **`tag_catalog.DEFAULT_TAG_ROWS`** is the single source of truth for names and counts; see also [docs/FRAMEWORK.md](docs/FRAMEWORK.md).
 3. **rules.py** — maps attribute combinations to actions (merge order when multiple rules match)
 4. **actions.py** — executes: `send_stop`, `block`, `delete`, `archive`, `log_only`. **Execution order** is normalized so **`archive` always runs before `delete`** even if rule merge order differs.
 
@@ -169,6 +169,20 @@ The rule **name** and the **`political` policy** in code are implementation labe
 
 The **political** policy does not block or maintain `blocked_senders.txt`. If you run **`main.py --policy spam`**, the spam rules may still call **`block`** (append to `blocked_senders.txt`); that file is **not** read by `main.py` anymore, so it does not affect who gets classified or archived.
 
+## Limitations and documented gaps
+
+The docs under **`docs/`** (especially **[docs/FRAMEWORK.md](docs/FRAMEWORK.md#10-future-work-estimates)** §10) spell out where behavior falls short of a hands-off, universal product. In short:
+
+- **macOS and permissions.** The agent depends on **local `chat.db`**, **Full Disk Access** (including the **exact Python** used by **`launchd`**, not only your terminal — see [docs/DAEMON.md](docs/DAEMON.md)), and **Automation** for AppleScript. Misconfigured TCC is the main “it works in the IDE but not on a schedule” failure mode.
+- **Daemon tradeoffs.** Scheduled cycles **quit Messages** when they reach that step, call the **Claude API** (cost and rate limits), and can feel disruptive; see the tradeoff callout in [docs/DAEMON.md](docs/DAEMON.md).
+- **Legacy archive rows.** **`classifier_attributes`** may be **`NULL`** on rows archived before that column existed until you re-archive or run backfill-style tools ([docs/FRAMEWORK.md](docs/FRAMEWORK.md#10-future-work-estimates) §10, [CHANGELOG.md](CHANGELOG.md)).
+- **Fragile optional UI helpers.** The experimental **sidebar scrub** (`poe messages-scrub-ui`) is **fragile** across macOS versions; database-driven flows remain the reliable approach (see **Permissions** above).
+- **Badge vs. other devices.** Local badge cleanup may still **disagree** with iCloud or iPhone state ([docs/DAEMON.md](docs/DAEMON.md) troubleshooting).
+- **Policies differ.** The default **political** policy does not use **`blocked_senders.txt`** to skip senders; the **`spam`** policy may still **append** to that file, which **`main.py` does not read** for filtering — see [docs/SETUP.md](docs/SETUP.md) and **Notes on Blocking** above.
+- **Tests vs. production.** Automated tests avoid your real **`chat.db`** and real AppleScript where possible ([docs/TESTING.md](docs/TESTING.md)); edge cases in the wild may not be fully exercised.
+
+For rough **remaining / stretch** ideas and time sketches, see **[docs/FRAMEWORK.md](docs/FRAMEWORK.md#10-future-work-estimates)** §10.
+
 ## Changelog
 
 Recent changes (UTC-timestamped entries, newest first): **[CHANGELOG.md](CHANGELOG.md)**.
@@ -190,6 +204,8 @@ Recent changes (UTC-timestamped entries, newest first): **[CHANGELOG.md](CHANGEL
 | `sms_agent.log`                          | Run log (auto-created)                                                                      |
 | `scripts/dry_run_recent.py`              | Preview tags + rules + execution-ordered actions (read-only DB)                             |
 | `scripts/backup_chat_db.py`              | Timestamped backup under `backups/`                                                         |
+| `docs/README.md`                         | Index of all files in **`docs/`**                                                           |
+| `docs/FRAMEWORK.md`                      | Architecture, classification (tags/weights), archive, training, future-work notes             |
 | `docs/DAEMON.md`                         | LaunchAgent: FDA, start/stop, logs, HTML report, troubleshooting                            |
 | `reports/index.html`                     | Generated political-archive report (gitignored; created by daemon or `poe report-generate`) |
 | `reports/daemon-cycles/index.html`       | Cycle index + links to per-cycle logs (gitignored; `poe daemon-cycles-generate`)            |

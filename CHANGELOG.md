@@ -4,6 +4,24 @@ All notable changes to this project are documented here. Entries use **UTC** tim
 
 ---
 
+## 2026-04-18T22:00:00Z UTC
+
+- **Docs:** Added **`docs/README.md`** as a short index of all **`docs/*.md`** files; **`README.md`** Setup section links to it.
+
+---
+
+## 2026-04-18T20:00:00Z UTC
+
+- **Docs:** Merged **`docs/CLASSIFICATION.md`** and **`FUTURE_WORK.md`** into **`docs/FRAMEWORK.md`** (§5 *Classification and tag weighting*; §10 *Future work*). Removed the standalone files; updated **`README.md`**, **`docs/QUERIES.md`**, and **`docs/SETUP.md`** to link to the new sections.
+
+---
+
+## 2026-04-18T12:00:00Z UTC
+
+- **Docs:** Documented the default tag seed as **`tag_catalog.DEFAULT_TAG_ROWS`** (**10** tags) in **`docs/QUERIES.md`**, **`docs/FRAMEWORK.md`**, and **`docs/CLASSIFICATION.md`**; **`README.md`** classifier bullet points to that tuple as the single source of truth. **`tag_catalog.py`** module docstring notes the shipped count.
+
+---
+
 ## 2026-04-01T18:00:00Z UTC
 
 - **Civic keyword heuristic:** Added **fundgop.net** and **us4u.io** to ``education`` merge markers and domain regex so SMS with those hosts get the political archive path (``message_tags_archive`` under default ``political`` policy). Broadened **GOP** matching: ``txt gop`` / ``text gop`` phrases, **G.O.P.** / spaced-letter forms, and ``g o p`` after punctuation normalization. **Ted Cruz:** regex ``\bted\s+cruz\b`` (handles double spaces), phrases **senator cruz** / **sen. cruz**, and ``\bsen(?:ator)?\.?\s+cruz\b``. **Josh Hawley:** same pattern — ``josh hawley``, **senator hawley** / **sen. hawley**, ``\bjosh\s+hawley\b``, ``\bsen(?:ator)?\.?\s+hawley\b``. **John Kennedy** (already had substring markers): **sen. kennedy**, ``\bjohn\s+kennedy\b``, ``\bsen(?:ator)?\.?\s+kennedy\b``. **John Thune:** ``john thune``, **senator thune** / **sen. thune**, ``\bjohn\s+thune\b``, ``\bsen(?:ator)?\.?\s+thune\b``. **Defund / defunded:** markers **defund** / **defunding** / **defunded** and regex ``\bdefund(?:ed|ing|s)?\b``. **Government:** marker and ``\bgovernment\b`` (broad — may match non-PAC SMS that mention government). **NYC radicals:** ``nyc radicals``, ``nyc radical``, ``\bnyc\s+radical(s)?\b``. **Congress:** standalone marker **congress** (plus existing *congress* phrases) and ``\bcongress\b`` (does not match inside *Congressional* as a whole word — substring marker still catches *Congressional*). **Oval Office:** ``oval office`` and ``\boval\s+office\b``.

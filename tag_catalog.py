@@ -2,8 +2,8 @@ from __future__ import annotations
 
 """
 Per-database tag vocabulary. Tags are **user-defined** rows (lowercase keys), not a fixed
-global enum. ``DEFAULT_TAG_ROWS`` seeds common SMS buckets; add rows in the catalog UI or
-here as needed—keep ``rules.py`` / ``classifier.py`` heuristics consistent.
+global enum. ``DEFAULT_TAG_ROWS`` seeds common SMS buckets (**10** tags as shipped); add rows
+in the catalog UI or here as needed—keep ``rules.py`` / ``classifier.py`` heuristics consistent.
 """
 
 import re
